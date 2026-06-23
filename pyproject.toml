@@ -1,0 +1,52 @@
+[project]
+name = "agent-relationship"
+version = "0.2.0"
+description = "关系感知 Skill — 多 Agent 系统的社会层"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Agent Relationship Contributors" }]
+keywords = [
+    "agent",
+    "multi-agent",
+    "relationship",
+    "moloch",
+    "governance",
+    "alignment",
+    "ai-safety",
+    "openai",
+    "deepseek",
+    "anthropic",
+    "claude",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = []
+
+[project.optional-dependencies]
+openai = ["openai>=1.0.0"]
+anthropic = ["anthropic>=0.30.0"]
+all = ["openai>=1.0.0", "anthropic>=0.30.0"]
+dev = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/agent-world/agent-relationship"
+Documentation = "https://github.com/agent-world/agent-relationship#readme"
+Repository = "https://github.com/agent-world/agent-relationship"
+Issues = "https://github.com/agent-world/agent-relationship/issues"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
