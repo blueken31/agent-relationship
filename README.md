@@ -9,8 +9,10 @@
 > **The relationship-awareness layer for multi-agent systems** — lightweight, standalone, zero required dependencies
 
 ```bash
-pip install agent-relationship
+pip install git+https://github.com/blueken31/agent-relationship.git
 ```
+
+> …or `pip install agent-relationship` once published to PyPI.
 
 ### The Problem
 
@@ -200,8 +202,10 @@ MIT
 > **多 Agent 系统的关系感知层** — 轻量、独立、零必选依赖
 
 ```bash
-pip install agent-relationship
+pip install git+https://github.com/blueken31/agent-relationship.git
 ```
+
+> 发布到 PyPI 后可直接 `pip install agent-relationship`。
 
 ### 它解决什么问题
 
