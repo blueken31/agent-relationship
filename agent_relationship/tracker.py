@@ -1,5 +1,5 @@
 """
-Agent Relationship — RelationshipTracker v0.6.1
+Agent Relationship — RelationshipTracker v0.7.0.dev0
 
 面向开发者的公开 API:
   track / health / can_cooperate / network / history
@@ -53,7 +53,7 @@ class RelationshipTracker:
 
     def __init__(
         self,
-        llm: Union[str, LLMBackend] = "mock",
+        llm: Optional[Union[str, LLMBackend]] = "mock",
         model: Optional[str] = None,
         api_key: Optional[str] = None,
         temperature: float = 0.3,
@@ -65,10 +65,11 @@ class RelationshipTracker:
         ] = None,
         storage_path: Optional[Union[str, PathLike]] = None,
         storage_timeout: float = 5.0,
+        diagnosis_policy: str = "legacy",
     ):
         """
         Args:
-            llm: "mock" | "openai" | "deepseek" | "anthropic" 或 LLMBackend 实例
+            llm: "mock" | "openai" | "deepseek" | "anthropic" 或 LLMBackend 实例；None 不请求语义评估
             model: 覆盖默认模型
             api_key: API 密钥
             temperature: LLM 采样温度
@@ -77,15 +78,20 @@ class RelationshipTracker:
             max_history: 每对关系最大交互记录数
             storage_path: 可选 SQLite 文件；省略时保留内存模式
             storage_timeout: 等待其他 SQLite 写事务的最长秒数
+            diagnosis_policy: 默认 legacy；task_evidence_v1 为可选任务证据策略，使用独立检查点
             on_risk_change: 风险等级变化回调
                 签名: (agent_a, agent_b, old_risk, new_risk, balance) -> None
         """
+        from .evidence_policy import validate_policy
+
+        validate_policy(diagnosis_policy)
         self._backend = self._create_llm(llm, model, api_key)
         if isinstance(moloch_threshold, bool) or not isinstance(moloch_threshold, (int, float)) or not math.isfinite(moloch_threshold) or not 0 <= moloch_threshold <= 1:
             raise ValueError("moloch_threshold 必须为 0 到 1 的有限数值")
         if isinstance(moloch_min_zone_size, bool) or not isinstance(moloch_min_zone_size, int) or moloch_min_zone_size < 2:
             raise ValueError("moloch_min_zone_size 必须为至少 2 的整数")
-        self._engine = RelationshipEngine(self._backend, max_history=max_history, temperature=temperature)
+        self._engine = RelationshipEngine(self._backend, max_history=max_history, temperature=temperature,
+                                          diagnosis_policy=diagnosis_policy)
         self._track_results = {}
         self._engine.moloch_threshold = moloch_threshold
         self._engine.moloch_min_zone_size = moloch_min_zone_size
@@ -185,13 +191,16 @@ class RelationshipTracker:
 
     def _create_llm(
         self,
-        llm_type: Union[str, LLMBackend],
+        llm_type: Optional[Union[str, LLMBackend]],
         model: Optional[str] = None,
         api_key: Optional[str] = None,
     ) -> LLMBackend:
         """工厂方法"""
         if isinstance(llm_type, LLMBackend):
             return llm_type
+        if llm_type is None:
+            from .llm.disabled import NoAssessment
+            return NoAssessment()
         if llm_type == "mock":
             return MockLLM()
         elif llm_type == "openai":
@@ -532,7 +541,8 @@ class RelationshipTracker:
         from .task_views import project_task
 
         return project_task(task_id, *self._task_projection_inputs(task_id),
-                            now=time.time(), cooldown_seconds=self._engine.recovery.COOLDOWN_SECONDS)
+                            now=time.time(), cooldown_seconds=self._engine.recovery.COOLDOWN_SECONDS,
+                            diagnosis_policy=self._engine.recovery.diagnosis_policy)
 
     @_snapshot_read
     def task_queue(self) -> Dict:
@@ -540,15 +550,18 @@ class RelationshipTracker:
         from .task_views import project_queue
 
         return project_queue(*self._task_projection_inputs(),
-                             now=time.time(), cooldown_seconds=self._engine.recovery.COOLDOWN_SECONDS)
+                             now=time.time(), cooldown_seconds=self._engine.recovery.COOLDOWN_SECONDS,
+                             diagnosis_policy=self._engine.recovery.diagnosis_policy)
 
     @_snapshot_write
     def link_incident(self, incident_id: str, task_id: str, reason: str) -> Dict:
         return self._engine.recovery.link_incident(incident_id, task_id, reason)
 
     @_snapshot_write
-    def propose_repair(self, incident_id: str, action: str = "verify_handoff") -> Dict:
-        return self._engine.recovery.propose_repair(incident_id, action)
+    def propose_repair(self, incident_id: str, action: str = "verify_handoff", *,
+                       verification_contract: Optional[Dict] = None) -> Dict:
+        return self._engine.recovery.propose_repair(incident_id, action,
+                                                   verification_contract=verification_contract)
 
     @_snapshot_write
     def begin_repair(self, plan_id: str, host_authorized: bool = False) -> Dict:

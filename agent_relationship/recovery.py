@@ -14,6 +14,9 @@ from typing import Callable, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from .models import InteractionRecord
+from .evidence_policy import (LEGACY, TASK_EVIDENCE, validate_policy, validate_context,
+                              condition_scope, validate_contract, bind_contract,
+                              host_result_matches, adverse_since_start)
 
 
 class RecoveryLedger:
@@ -43,9 +46,11 @@ class RecoveryLedger:
         },
     }
 
-    def __init__(self, clock: Callable[[], float] = time.time):
+    def __init__(self, clock: Callable[[], float] = time.time, diagnosis_policy: str = LEGACY):
         if not callable(clock):
             raise ValueError("clock must be callable")
+        validate_policy(diagnosis_policy)
+        self.diagnosis_policy = diagnosis_policy
         self._clock = clock
         self._last_clock: Optional[float] = None
         self._lock = RLock()
@@ -91,16 +96,18 @@ class RecoveryLedger:
             raise ValueError("event timestamp must be finite and nonnegative")
         return deepcopy(asdict(record))
 
-    @staticmethod
-    def _category(record: InteractionRecord, risk: str) -> Optional[str]:
-        if record.assessment_status == "assessed" and record.goal_status == "violated":
+    def _category(self, record: InteractionRecord, risk: str) -> Optional[str]:
+        evidence_policy = self.diagnosis_policy == TASK_EVIDENCE
+        if record.goal_status == "violated" and (record.is_assessed or evidence_policy):
             return "goal_violation"
         impacts = [v for v in (record.impact_a, record.impact_b) if v is not None]
         if record.assessment_status == "assessed" and impacts and min(impacts) <= -0.5:
             return "material_harm"
         if record.context.get("result") in ("failed", "error", "timeout"):
             return "task_failure"
-        if record.assessment_status != "assessed":
+        if evidence_policy and record.context.get("evidence_requirement"):
+            return "evidence_needed"
+        if not evidence_policy and record.assessment_status != "assessed":
             return "evidence_needed"
         # A good event can arrive while the aggregate score is still critical.
         # It is not fresh adverse evidence and must not invalidate its own repair.
@@ -112,6 +119,8 @@ class RecoveryLedger:
         """Record evidence and create/extend an open issue when warranted."""
         with self._lock:
             snapshot = self._snapshot(record)
+            if self.diagnosis_policy == TASK_EVIDENCE:
+                validate_context(record.context)
             if record.event_id in self._events:
                 if snapshot != self._events[record.event_id]:
                     raise ValueError("event_id already belongs to different evidence")
@@ -126,6 +135,8 @@ class RecoveryLedger:
                 incident = next((i for i in self._incidents.values() if (
                     i["status"] == "open" and tuple(i["agents"]) == pair
                     and i["task_id"] == record.task_id and i["category"] == category
+                    and (self.diagnosis_policy == LEGACY or condition_scope(record.context, category)
+                         == condition_scope(self._events[i["evidence_ids"][0]]["context"], category))
                 )), None)
                 if incident is None:
                     titles = {
@@ -135,6 +146,8 @@ class RecoveryLedger:
                         "evidence_needed": "评估依据不足，等待核验",
                         "collaboration_risk": "协作出现异常，需核验",
                     }
+                    if self.diagnosis_policy == TASK_EVIDENCE:
+                        titles["evidence_needed"] = "当前动作缺少必需证据"
                     incident = {
                         "id": "incident_" + uuid4().hex,
                         "agents": list(pair),
@@ -151,7 +164,8 @@ class RecoveryLedger:
                         "assessment_source": record.assessment_source,
                         "evidence_ids": [],
                         "status": "open",
-                        "recommended_action": "verify_handoff",
+                        "recommended_action": ("restricted_retest" if self.diagnosis_policy == TASK_EVIDENCE
+                                               and category == "task_failure" else "verify_handoff"),
                         "created_at": now,
                         "updated_at": now,
                         "version": 0,
@@ -250,7 +264,8 @@ class RecoveryLedger:
             })
             return deepcopy(incident)
 
-    def propose_repair(self, incident_id: str, action: str = "verify_handoff") -> Dict:
+    def propose_repair(self, incident_id: str, action: str = "verify_handoff", *,
+                       verification_contract: Optional[Dict] = None) -> Dict:
         """Return a single bounded proposal; this does not authorize execution."""
         with self._lock:
             if action not in self.ACTIONS:
@@ -260,13 +275,19 @@ class RecoveryLedger:
                 raise ValueError("an open incident is required")
             if not incident["task_id"]:
                 raise ValueError("task_id is required before proposing recovery")
+            contract = None
+            if verification_contract is not None:
+                if self.diagnosis_policy != TASK_EVIDENCE:
+                    raise ValueError("verification contracts require task_evidence_v1")
+                contract = validate_contract(verification_contract)
+                bind_contract(contract, incident, self._events, action)
             active = next((p for p in self._plans.values() if (
                 p["incident_id"] == incident_id
                 and p["state"] not in ("completed", "cancelled")
             )), None)
             if active:
-                if active["action"] != action:
-                    raise ValueError("an active plan already has a different action")
+                if active["action"] != action or active.get("verification_contract") != contract:
+                    raise ValueError("an active plan already has a different action or verification contract")
                 return deepcopy(active)
             now = self._now()
             last = incident["last_unsuccessful_at"]
@@ -292,6 +313,10 @@ class RecoveryLedger:
                 "incident_version": None,
                 "start_sequence": None,
             }
+            if self.diagnosis_policy == TASK_EVIDENCE:
+                plan["verification_contract"] = contract
+                plan["proposal_sequence"] = self._sequence
+                plan["completion_sequence"] = None
             self._plans[plan["id"]] = plan
             return deepcopy(plan)
 
@@ -306,6 +331,8 @@ class RecoveryLedger:
             incident = self._incidents[plan["incident_id"]]
             if incident["status"] != "open":
                 raise ValueError("incident is no longer open")
+            if plan.get("verification_contract") is not None:
+                bind_contract(plan["verification_contract"], incident, self._events, plan["action"])
             now = self._now()
             plan.update({
                 "state": "started", "started_at": now,
@@ -374,7 +401,14 @@ class RecoveryLedger:
             if outcome == "resolved":
                 if incident["version"] != plan["incident_version"]:
                     raise ValueError("new adverse evidence requires a fresh recovery assessment")
-                if not (
+                contract = plan.get("verification_contract")
+                if contract is not None:
+                    bind_contract(contract, incident, self._events, plan["action"])
+                    if adverse_since_start(plan, self._incidents, self._event_order, self._sequence):
+                        raise ValueError("new adverse evidence requires a fresh recovery assessment")
+                    if not host_result_matches(plan, evidence.context, evidence.timestamp, evidence.goal_status):
+                        raise ValueError("resolution requires a fresh matching host verification receipt")
+                elif not (
                     evidence.context.get("verification_passed") is True
                     and evidence.context.get("result") == "success"
                     and evidence.assessment_status == "assessed"
@@ -392,6 +426,8 @@ class RecoveryLedger:
                 "state": "completed", "completed_at": now,
                 "outcome": outcome, "evidence_event_id": evidence.event_id,
             })
+            if self.diagnosis_policy == TASK_EVIDENCE:
+                plan["completion_sequence"] = self._sequence
             incident["updated_at"] = now
             if outcome == "resolved":
                 incident["status"] = "resolved"

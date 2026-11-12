@@ -37,8 +37,10 @@ class Assessment:
     def __post_init__(self) -> None:
         if self.status not in ("assessed", "unknown"):
             raise ValueError("invalid assessment status")
-        if self.source not in ("model", "mock"):
+        if self.source not in ("model", "mock", "not_requested"):
             raise ValueError("invalid assessment source")
+        if self.source == "not_requested" and (self.status != "unknown" or self.goal_status != "unknown"):
+            raise ValueError("an unrequested assessment cannot supply judgments")
         if not isinstance(self.reason, str) or not self.reason.strip():
             raise ValueError("assessment reason is required")
         if self.goal_status not in ("met", "violated", "unknown"):

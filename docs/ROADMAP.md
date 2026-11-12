@@ -82,38 +82,51 @@ evidence/receipts, exact model/assessment configuration and an agreed cost ceili
 The next work should run that bounded comparison and inspect its disagreements,
 before expanding generic infrastructure.
 
-## Completed evidence: first 2CarsAI project observation
+## Completed: 0.6.1 host-result presentation
 
-The [2CarsAI #238 observation report](2CARSAI_OBSERVATION.md) records an actual
-HTTP/PostgreSQL/Redis reproduction: the same two original tests fail before the
-historical repair and pass afterward. Fresh host verification was then recorded
-against SDK plans. Deduplication, SQLite reopen and task binding held. With no
-assessment provider configured, the host's passing test did not resolve the SDK
-incidents; each task also gained an `evidence_needed` incident. Runtime rules
-were left unchanged and no mock positive assessment was substituted.
-
-This is one known defect with two parameter variants and analysis-role identities,
-not a captured multi-agent trace or a native-versus-SDK quality comparison. The
-existing native reviewer found the defect before this study. Unknown usage remains
-unknown, and no model-accuracy, token-saving or recovery-time uplift is claimed.
-
-## Current batch: 0.6.1 host-result presentation
-
-[PR #6](https://github.com/blueken31/agent-relationship/pull/6) merged at `f6f11db`,
-with passing [main CI](https://github.com/blueken31/agent-relationship/actions/runs/43203772368).
 The [read-only projection correction](HOST_VERIFICATION_VIEWS.md) separates a
 strictly bound host result from the collaboration assessment before plan completion.
 Passed host checks with unknown assessments point to assessment review; the
 example presents the associated missing assessment within the original task card.
 Competing receipts, missing evidence, other task/pair issues and newer adverse
 events remain visible. Incident closure, scoring, permissions and storage schemas
-are unchanged. The retained 2CarsAI checkpoint supplies a read-only regression
-check without repeating its original tests or claiming a new semantic result.
+are unchanged. Synthetic receipt fixtures exercise read-only projections without
+claiming a project result or semantic improvement.
+
+[PR #7](https://github.com/blueken31/agent-relationship/pull/7) merged at
+`c0c2c99`, with all four Python versions passing
+[main CI](https://github.com/blueken31/agent-relationship/actions/runs/43207571936).
 
 Next, capture an authorized real task's events and run the capable native
 comparison. Whether a trusted host result should independently close a bounded
 `task_failure` remains a separate contract decision, not implied by a display fix.
 Railway is optional infrastructure; no automatic intervention is enabled.
+
+## In development: opt-in task evidence policy (0.7.0.dev0)
+
+The approved bounded follow-up is implemented locally; publication and live
+value validation are pending. See [the policy contract and synthetic walkthrough](TASK_EVIDENCE_POLICY.md).
+
+| Deliverable | Status and boundary |
+|---|---|
+| Separate uncertainty from actionable evidence gaps | `task_evidence_v1` retains ordinary unknown events without an automatic repair item; explicit failures and next-action requirements remain actionable |
+| Objective issue closure | Predeclared artifact/revision/check/verifier contract and a fresh matching host receipt; semantic harms and goal issues retain their own conditions |
+| User-facing task projection | Review the bound receipt, close this issue, return to the original task; unknown assessment stays visible and does not grant permission |
+| Persistence and compatibility | Opt-in schema 2; legacy schema 1/default preserved; stale plans remain readable/cancellable after new evidence and restart |
+| Rules-only mode | `llm=None` records `not_requested/unknown`; no mock score, semantic inference or trust gain |
+| Synthetic walkthrough | Authored unknown observations remain visible; a bounded objective issue closes only with its declared checks and matching simulated receipt |
+
+Public validation uses authored synthetic fixtures. Project-specific captures,
+logs, source patches, reports and receipts are kept outside the public source
+tree. See [evidence handling](EVIDENCE_HANDLING.md). No public fixture establishes
+incremental diagnostic quality, fewer user interventions or cost savings.
+
+Before widening this policy, connect one new task whose artifact and conditions
+are declared **before execution**, check that true review findings are mapped,
+then compare a strong native harness with the same host plus SDK rules. Targeted
+semantic assessment is a subsequent ablation, not implemented routing. The current
+model prompt/parser still requests bilateral impacts; decoupling semantic goal
+judgments and adding dependency-aware diagnosis remain explicit follow-ups.
 
 ## Next acceptance gate: one real host and a strong native baseline
 

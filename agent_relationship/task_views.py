@@ -8,6 +8,8 @@ projection never creates a recovery plan or changes the ledger's clock.
 from copy import deepcopy
 import math
 
+from .evidence_policy import host_result_matches, adverse_since_start, bind_contract
+
 
 _WAITING = {"awaiting_result", "cooldown"}
 _STATE_PRIORITY = {
@@ -125,7 +127,7 @@ def _host_verification(plan, events):
                     and event.get("result") == "success")
     status = ("multiple" if event is None else "passed" if verified else
               "failed" if event.get("result") in ("failed", "error", "timeout") else "reported")
-    return {
+    projected = {
         "status": status, "plan_id": plan["id"], "incident_id": plan["incident_id"],
         "event_id": event_id, "event_ids": ids,
         "observation": _observation(event_id, event) if event else None,
@@ -133,6 +135,11 @@ def _host_verification(plan, events):
         "source": "host_report", "independently_verified": False,
         "grants_permission": False,
     }
+    if plan.get("verification_contract") is not None:
+        projected["contract_match"] = bool(event and host_result_matches(
+            plan, event["context"], event["timestamp"], event.get("goal_status", "unknown")))
+        projected["verification_contract"] = deepcopy(plan["verification_contract"])
+    return projected
 
 
 def _related_result_plan(incident, plans, events, incidents):
@@ -160,11 +167,11 @@ def _card_order(card):
             -card["updated_at"], card["id"])
 
 
-def _incident_card(incident, plans, events, now, cooldown_seconds, incidents=()):
+def _incident_card(incident, plans, events, now, cooldown_seconds, incidents=(), diagnosis_policy="legacy"):
     related_plans = [p for p in plans if p["incident_id"] == incident["id"]]
     plan, candidates, ambiguous = _select_plan(incident, related_plans)
     associated = (_related_result_plan(incident, plans, events, incidents)
-                  if not related_plans else None)
+                  if not related_plans and diagnosis_policy == "legacy" else None)
     result_plan = plan or associated
     host_verification = _host_verification(result_plan, events)
     original_ids = list(incident.get("evidence_ids", []))
@@ -192,6 +199,12 @@ def _incident_card(incident, plans, events, now, cooldown_seconds, incidents=())
     outcome = (plan.get("outcome") if plan else None)
     if plan and plan["state"] == "cancelled":
         outcome = "cancelled"
+    stale_contract = False
+    if plan and plan["state"] == "proposed" and plan.get("verification_contract") is not None:
+        try:
+            bind_contract(plan["verification_contract"], incident, events, plan["action"])
+        except ValueError:
+            stale_contract = True
 
     if missing_count:
         state = "evidence_missing"
@@ -208,14 +221,26 @@ def _incident_card(incident, plans, events, now, cooldown_seconds, incidents=())
     elif incident.get("task_id") is None:
         state = "needs_task_link"
         action = _action("link_task", "关联原任务", incident)
+    elif stale_contract:
+        state = "needs_reconciliation"
+        action = _action("reconcile_plan", "核对新增依据与原验证条件", incident, plan)
     elif result_plan and result_plan["state"] == "started":
         owner = next((item for item in incidents if item["id"] == result_plan["incident_id"]), incident)
-        if result_plan.get("incident_version") != owner["version"]:
+        new_hazard = (result_plan.get("verification_contract") is not None and adverse_since_start(
+            result_plan, {item["id"]: item for item in incidents},
+            {key: value["sequence"] for key, value in events.items()},
+            max((value["sequence"] for value in events.values()), default=0)))
+        if result_plan.get("incident_version") != owner["version"] or new_hazard:
             state = "needs_reconciliation"
             action = _action("reconcile_plan", "核对新增依据与原执行结果", incident, result_plan)
         elif host_verification:
             judgment = host_verification["assessment"]
-            if host_verification["status"] == "passed" and judgment["status"] == "unknown":
+            if result_plan.get("verification_contract") is not None:
+                state = "result_recorded"
+                label = ("核对回执并关闭本次问题" if host_verification.get("contract_match")
+                         else "核对未满足的验证条件")
+                action = _action("review_host_result", label, incident, result_plan)
+            elif host_verification["status"] == "passed" and judgment["status"] == "unknown":
                 state = "awaiting_assessment"
                 action = _action("inspect_assessment", "核对协作评估", incident, result_plan)
             else:
@@ -276,13 +301,13 @@ def _incident_card(incident, plans, events, now, cooldown_seconds, incidents=())
     }
 
 
-def project_task(task_id, incidents, plans, events, now, cooldown_seconds):
+def project_task(task_id, incidents, plans, events, now, cooldown_seconds, diagnosis_policy="legacy"):
     """Project one task; resolved incidents never imply host task completion."""
     if not isinstance(task_id, str) or not task_id.strip():
         raise ValueError("task_id must be a nonempty string")
     related = [i for i in incidents if i.get("task_id") == task_id]
     related_plans = [p for p in plans if p.get("task_id") == task_id]
-    cards = sorted((_incident_card(i, related_plans, events, now, cooldown_seconds, related)
+    cards = sorted((_incident_card(i, related_plans, events, now, cooldown_seconds, related, diagnosis_policy)
                     for i in related), key=_card_order)
     opened = [c for c in cards if c["status"] == "open"]
     resolved = [c for c in cards if c["status"] == "resolved"]
@@ -314,7 +339,7 @@ def project_task(task_id, incidents, plans, events, now, cooldown_seconds):
         action = _action("inspect_task", "查看原任务")
     else:
         action = _action("record_evidence", "补充任务依据")
-    return {
+    projected = {
         "task_id": task_id, "recovery_status": status,
         "open_incident_count": len(opened), "resolved_incident_count": len(resolved),
         "observed_event_count": len(event_ids), "active_plan_count": active_count,
@@ -330,16 +355,27 @@ def project_task(task_id, incidents, plans, events, now, cooldown_seconds):
                           + [_time(events[event_id].get("timestamp")) for event_id in event_ids], default=0.0),
         "incidents": cards,
     }
+    if diagnosis_policy == "task_evidence_v1":
+        projected.update(diagnosis_policy=diagnosis_policy,
+                         unknown_assessment_count=sum(events[key].get("assessment_status") == "unknown"
+                                                      for key in event_ids),
+                         advisory_only=True, grants_permission=False)
+        if status == "resolved":
+            projected["summary"] = "本次问题已按登记条件核验关闭"
+        elif status == "observed":
+            projected["summary"] = "观察已记录，暂无需处理的任务问题"
+    return projected
 
 
-def project_queue(incidents, plans, events, now, cooldown_seconds):
+def project_queue(incidents, plans, events, now, cooldown_seconds, diagnosis_policy="legacy"):
     """Return compact unresolved-task rows and separate unlinked incident cards."""
     task_ids = {i["task_id"] for i in incidents if i.get("task_id") is not None}
-    projected = [project_task(task_id, incidents, plans, events, now, cooldown_seconds) for task_id in task_ids]
+    projected = [project_task(task_id, incidents, plans, events, now, cooldown_seconds,
+                              diagnosis_policy=diagnosis_policy) for task_id in task_ids]
     projected = [task for task in projected if task["recovery_status"] in ("needs_attention", "waiting")]
     projected.sort(key=lambda task: (_card_order(task["incidents"][0]), task["task_id"]))
     tasks = [{key: value for key, value in task.items() if key != "incidents"} for task in projected]
-    unlinked = sorted((_incident_card(i, plans, events, now, cooldown_seconds, incidents)
+    unlinked = sorted((_incident_card(i, plans, events, now, cooldown_seconds, incidents, diagnosis_policy)
                        for i in incidents if i["status"] == "open" and i.get("task_id") is None),
                       key=_card_order)
     return {"tasks": tasks, "unlinked_incidents": unlinked}

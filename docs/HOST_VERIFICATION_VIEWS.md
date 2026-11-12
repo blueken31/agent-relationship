@@ -1,8 +1,7 @@
 # Host verification and collaboration assessment
 
-Version 0.6.1 addresses the result-presentation gap found in the
-[2CarsAI observation](2CARSAI_OBSERVATION.md). A host had recorded a successful
-bounded retest, but `complete_repair()` correctly refused an unknown assessment.
+Version 0.6.1 addresses a result-presentation gap: a host can record a successful
+bounded retest while the legacy `complete_repair()` rule refuses an unknown assessment.
 The old projection only showed receipts attached to completed plans, so it kept
 asking for a result that was already recorded.
 
@@ -66,8 +65,8 @@ projection input cannot qualify a new result.
 This proves SDK recording order, **not the occurrence time or authenticity of an
 external operation**. Hosts must protect verification fields from agent input,
 check the original external receipt, enforce its scope/freshness and record it
-after the corresponding host-authorized operation. The 2CarsAI probe additionally
-checks that the real test start time follows plan creation.
+after the corresponding host-authorized operation. The synthetic receipt
+walkthrough also rejects a supplied start time that precedes plan creation.
 
 An `evidence_needed` incident receives `related_incident_id` only if all of its
 observations belong to one such pending plan's results. Unrelated observations
@@ -78,11 +77,9 @@ execution/assessment lines and one next step. Raw event context is never rendere
 
 ## Verification and limits
 
-The original 2CarsAI SQLite checkpoint was read again with this projection. Both
-samples now point to assessment review, while all four incidents remain open.
-The checkpoint bytes and exported state were unchanged; the original business
-tests and model calls were not repeated. See the retained
-[read-only check](../evaluation/captures/2carsai-pr238/view-check.json).
+The public suite uses synthetic observations and temporary SQLite files. It
+checks that reading a bound result preserves state and avoids assessment calls.
+Project-specific evidence is not required to run these contract checks.
 
 Contract tests cover unknown assessments, strict Boolean handling, wrong task,
 pair/action/plan, stale or missing sequence, equal timestamps, competing receipts,

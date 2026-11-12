@@ -1,4 +1,4 @@
-# Agent Relationship 0.6.1
+# Agent Relationship 0.7.0.dev0
 
 [English](#english) · [中文](#中文)
 
@@ -14,23 +14,30 @@ Python 3.10+, zero required runtime dependencies. HTTP adapters use the standard
 
 Keep the host's orchestration, tools, approvals, tracing and recovery mechanisms. This SDK adds reusable task-linked incident and verification semantics; whether those improve a well-configured native harness must be measured. Native prompts and hooks can implement overlapping behavior.
 
+The host chooses the task roles. The SDK observes selected interactions between
+existing agents; no fixed team size or automatic per-user deployment is enabled.
+
 Version 0.6.0 adds an [Agents API event adapter](docs/AGENTS_API_ADAPTER.md) and a [paired evaluation protocol](docs/EVALUATION.md). The adapter targets the documented OpenAI Agents API event surface, not every Codex interface. Its fixtures are synthetic and live integration remains unverified. The evaluation gives the native arm the same goals, evidence, policy and budget as the SDK arm. Offline scorer checks do not establish semantic quality or incremental benefit.
 
 The near-term priority is evidence of better collaboration decisions: legitimate disagreement, shared dependency failures, goal violations, unresolved harms and valid recovery. Role, direction and dependency context are retained for investigation; the current bilateral scoring engine does not infer a cluster's root cause.
 
-The checkout also provides [prepared evaluation sessions](docs/EVALUATION_RUNS.md): review the exact inputs/configuration and budgets before host calls, keep completed receipts after interruption, and reconcile uncertain outcomes before continuing. This tooling reserves work locally; the host must enforce provider limits and supply actual usage. No live comparative result has been measured.
-
-The first [2CarsAI project observation](docs/2CARSAI_OBSERVATION.md) reproduced a
-historical defect with the original HTTP/database tests: two failures before the
-fix and two passes afterward. It also exposed a workflow gap: a passing host test
-cannot close an SDK incident when the collaboration assessment is unavailable.
-This is project integration evidence, not a measured advantage over native Codex.
+The checkout also provides [prepared evaluation sessions](docs/EVALUATION_RUNS.md): review the exact inputs/configuration and budgets before host calls, keep completed receipts after interruption, and reconcile uncertain outcomes before continuing. This tooling reserves work locally; the host must enforce provider limits and supply actual usage. No metered comparative quality or cost result has been established.
 
 Version 0.6.1 fixes the [read-only result presentation](docs/HOST_VERIFICATION_VIEWS.md):
 task cards show the bound host verification and its collaboration assessment
 separately, even before a recovery plan can complete. A passed host check with an
 unknown assessment points to reviewing that assessment. Scores, incident closure,
 permissions and persisted schemas are unchanged.
+
+This development checkout adds an **opt-in task-evidence policy**. Ordinary
+assessment uncertainty stays in the evidence record without automatically
+creating a repair item. A specifically declared task failure or missing check
+can be closed with a fresh host receipt matching a predeclared artifact, revision,
+check set and verifier, without a bilateral benefit score. See the
+[contract, workflow and limits](docs/TASK_EVIDENCE_POLICY.md) and
+[offline example](examples/task_evidence.py). Legacy remains the default;
+the new policy uses a separate schema-2 checkpoint. This prototype has not been
+released or shown to improve live diagnostic accuracy.
 
 ### Install and try the complete offline example
 
@@ -45,7 +52,7 @@ PYTHONPATH=. python examples/task_review_preview.py --output /tmp/task-review.ht
 python -m unittest discover -s agent_relationship/tests -v
 ```
 
-The examples use explicit simulated fixtures. They demonstrate a failed handoff, an evidence card, a single bounded check, a verified result and retention of the original task ID. They make no model calls and do not execute external tasks. Host authorization, verification and the local continuation result are marked as simulations.
+Public examples and checks use explicit simulated fixtures. Keep project evidence outside the repository; see [evidence handling](docs/EVIDENCE_HANDLING.md). They demonstrate a failed handoff, an evidence card, a single bounded check, a verified result and retention of the original task ID. They make no model calls and do not execute external tasks. Host authorization, verification and the local continuation result are marked as simulations.
 
 ### Record evidence and inspect the original task
 
@@ -108,7 +115,7 @@ Use the context manager or call `close()` to release the connection. Durable mod
 2. `propose_repair(incident_id, action="verify_handoff")` returns a proposal with `id`, `scope`, `success_criteria`, `max_attempts=1` and `grants_permission=False`.
 3. The host checks its own permissions and calls `begin_repair(plan_id, host_authorized=True)` to record that decision. This flag is a host declaration, not an access-control mechanism.
 4. The host performs the bounded action, validates the result and records a new event for the same agents and task, with the plan's `action`, `repair_plan_id`, actual `result` and `verification_passed`.
-5. `complete_repair(plan_id, outcome="resolved", evidence_event_id=...)` attaches the recorded evidence. Resolution requires a successful host verification and a compatible assessment; unrelated, old, unknown or contradicted evidence cannot close the issue. Goal-violation incidents additionally require the new goal judgment to be `met`.
+5. `complete_repair(plan_id, outcome="resolved", evidence_event_id=...)` attaches the recorded evidence. The default legacy policy requires successful host verification and a compatible assessment; unrelated, old, unknown or contradicted evidence cannot close the issue. Goal-violation incidents additionally require the new goal judgment to be `met`. The opt-in [task-evidence contract](docs/TASK_EVIDENCE_POLICY.md) defines a separate closure path for bounded objective issues.
 
 Supported proposal types are `verify_handoff`, `restricted_retest` and `reassign_task`. They describe bounded work; none is an executor. Failed or partial recovery leaves the issue open and applies a cooldown. New adverse evidence prevents an older plan from resolving an updated issue. Resolving one incident does not erase historical scores or other unresolved issues. `cancel_repair(plan_id)` abandons a stale or unwanted plan without inventing an outcome. Canceling a started attempt retains the cooldown; the host must separately stop any ongoing execution, because cancellation here is bookkeeping only.
 
@@ -159,6 +166,7 @@ Open the [standalone read-only card preview](docs/task-review-preview.html) in a
 
 | `llm` | Interface | Configuration |
 |---|---|---|
+| `None` | Do not request semantic assessment | `unknown` with source `not_requested`; no model or mock estimate |
 | `mock` | Explicit deterministic scenarios | No credentials; unsupported scenarios are unknown |
 | `openai` | Chat Completions-compatible HTTP API | `OPENAI_API_KEY`, optional `OPENAI_MODEL` and `OPENAI_BASE_URL` |
 | `deepseek` | Chat Completions-compatible HTTP API | `DEEPSEEK_API_KEY`, optional `DEEPSEEK_MODEL` and `DEEPSEEK_BASE_URL` |
@@ -195,6 +203,10 @@ This release ships the SDK, an initial observation adapter for Agents API events
 
 这是一个**面向多 Agent 系统的协作诊断与恢复验证层，以可嵌入的 Python SDK 交付**。它发现任务协作异常、保留判断依据、准备受限恢复方案，并记录验证结果。使用者能沿着原任务查看发生了什么、推荐处理什么、问题是否真正解除。
 
+SDK 不规定每个项目必须启用五个 agent。宿主按任务配置已有角色，SDK 观察选定的协作事件。
+
+公开示例与校验使用合成数据；项目试验资料在仓库外保管，参见[证据处理规则](docs/EVIDENCE_HANDLING.md)。
+
 SDK 默认只做观察和诊断。它不执行任务，也不授予权限；宿主系统负责授权、预算、实际操作和证据核验。Python 3.10 及以上，运行时零必选依赖。“轻量”描述接入与依赖规模，不代表已经证明低成本或集群扩展能力。
 
 ### 与现有 harness 的关系
@@ -205,17 +217,18 @@ SDK 默认只做观察和诊断。它不执行任务，也不授予权限；宿�
 
 近期优先验证合理否决、共同依赖故障、目标违规、未解决损害与有效恢复。角色、方向及依赖关系用于保留调查线索；当前双边评分还不能自动判定整个集群的故障根因。
 
-仓库还提供[可核对、可接续的评测批次](docs/EVALUATION_RUNS.md)：运行前查看输入、配置和预算；中断后保留已完成结果，结果不明时先核对再继续。工具按声明上限预留本地任务预算，实际模型调用限制与用量记录仍由宿主落实，真实对照结果尚待测量。
-
-首轮 [2CarsAI 项目观察](docs/2CARSAI_OBSERVATION.md)已用原项目 HTTP/数据库测试
-复现历史缺陷：修复前两项失败，修复后相同两项通过。同时发现接入缺口：
-宿主测试已通过，但协作评估不可用时，SDK 仍不能关闭原问题。本轮是项目接入
-证据，尚未证明相对原生 Codex 的增益。
+仓库还提供[可核对、可接续的评测批次](docs/EVALUATION_RUNS.md)：运行前查看输入、配置和预算；中断后保留已完成结果，结果不明时先核对再继续。工具按声明上限预留本地任务预算，实际模型调用限制与用量记录仍由宿主落实，计量完整的质量与成本对照尚待完成。
 
 0.6.1 修正[只读结果展示](docs/HOST_VERIFICATION_VIEWS.md)：恢复方案尚未结束时，
 原任务也能分别显示已绑定的宿主核验结果和协作评估。宿主复测已通过、评估仍
 未知时，下一步指向核对评估，避免重复提示执行核验。评分、问题关闭、执行权限
 和持久化格式保持不变。
+
+当前开发版本 `0.7.0.dev0` 提供可选的[任务证据策略](docs/TASK_EVIDENCE_POLICY.md)：
+普通“评估未知”保留在记录中；明确失败或缺少下一步必需检查时才产生相应待办。
+客观问题可通过事先登记的产出、版本、检查项、验证者及新的匹配回执关闭，无须
+补造双方收益分数。默认规则保持 legacy，新策略使用独立的 schema 2 检查点。
+原型尚未发布；历史回放通过不代表已经证明实际诊断增益。
 
 ### 从完整离线示例开始
 
@@ -292,7 +305,7 @@ SDK 状态检查与宿主提交之间没有跨库原子保证，真实宿主仍�
 ### 诊断含义与升级注意事项
 
 - `assessed` 表示完成评估，`unknown` 表示证据不足、输出非法或模型不可用；未知不等于健康，也不自动增加信任。
-- `assessment_source` 明确区分 `mock` 和 `model`。Mock 只提供确定性场景，不理解自由叙述；真实模型判断也需要业务验证。
+- `assessment_source` 区分 `mock`、`model` 和 `not_requested`。`llm=None` 不请求语义评估，保留未知；Mock 只提供确定性场景，不理解自由叙述；真实模型判断也需要业务验证。
 - 任务目标优先于双方收益。一方损失不能被另一方收益抵消；尚未解决的重大事件不能被后续小成功冲淡。
 - `confidence` 是已评估事件数量的启发式指标 `n / (n + 5)`，不是正确率或可靠性概率。
 - `can_cooperate()` 的 `continue / review / unknown / repair_required` 都是建议。无历史时 `can=False`；默认门槛改为 `0.7`，还需要至少三条已评估事件且无待处理异常。宿主应按 `decision` 和原有规则处理，不能把布尔值直接当作权限。
