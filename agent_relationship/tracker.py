@@ -1,5 +1,5 @@
 """
-Agent Relationship — RelationshipTracker v0.5.0
+Agent Relationship — RelationshipTracker v0.6.0
 
 面向开发者的公开 API:
   track / health / can_cooperate / network / history

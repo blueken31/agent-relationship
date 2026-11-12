@@ -1,6 +1,6 @@
 # Agent Relationship development roadmap
 
-The 0.3.0 foundation was merged in [PR #1](https://github.com/blueken31/agent-relationship/pull/1) at `cee0e4d`. The 0.4.0 durable checkpoints were merged in [PR #2](https://github.com/blueken31/agent-relationship/pull/2) at `427719b`, with passing [main CI](https://github.com/blueken31/agent-relationship/actions/runs/43181777529). This roadmap describes the subsequent 0.5.0 implementation and remaining work. A completed SDK mechanism is not a claim of production readiness or real-model effectiveness.
+The 0.3.0 foundation was merged in [PR #1](https://github.com/blueken31/agent-relationship/pull/1) at `cee0e4d`. The 0.4.0 durable checkpoints were merged in [PR #2](https://github.com/blueken31/agent-relationship/pull/2) at `427719b`, with passing [main CI](https://github.com/blueken31/agent-relationship/actions/runs/43181777529). The 0.5.0 original-task continuity work was merged in [PR #3](https://github.com/blueken31/agent-relationship/pull/3) at `dc7e3dc`, with passing [main CI](https://github.com/blueken31/agent-relationship/actions/runs/43185929957). This roadmap follows the approved focus on multi-agent collaboration diagnosis, recovery verification and measured value alongside existing harnesses. A completed SDK mechanism is not a claim of production readiness or real-model effectiveness.
 
 ## Completed foundation: 0.3.0
 
@@ -26,7 +26,7 @@ The SDK records and diagnoses. It does not execute a proposed action, independen
 
 This is restoration of the current checkpoint. It does not re-evaluate historical events, keep a history of checkpoints, resume external execution or guarantee notification delivery. An uncommitted operation may need to be retried after interruption; a committed event with the same ID is not counted again.
 
-## Current batch: 0.5.0 original-task continuity
+## Completed original-task continuity: 0.5.0
 
 | Area | Implemented scope | Validation |
 |---|---|---|
@@ -40,40 +40,46 @@ The intended experience is: find the original task → inspect one concise issue
 
 The host example's local result and receipt share one transaction. Its SDK readiness check and host commit use separate databases and are not atomic. A real host must supply its own concurrency policy and reconcile ambiguous external outcomes using the external operation's stable ID. No external executor or exactly-once external delivery is supplied.
 
-## Next: operational integration and evidence lifecycle
+## Current batch: 0.6.0 collaboration evaluation and harness boundary
 
-- Connect the reference task view and continuation contract to one real host's permissions, task revisions and external operation receipts. Define its reconciliation path when execution outcome is unknown.
-- Add a durable notification outbox with stable delivery IDs and host deduplication. Current callbacks are best-effort and run after commit; a crash in that interval can lose a notification.
-- Define versioned historical replay and deliberate re-evaluation when model, prompt or scoring policy changes. Preserve original assessments and distinguish them from later interpretations.
-- Bound evidence retention and support export/archival without dropping unresolved incidents or losing event deduplication guarantees.
-- Measure snapshot size, write latency and lock contention. The initial whole-state checkpoint serializes writers, including model evaluation, and is intended for a local file on one machine.
-- Design a distributed store and coordination protocol only if measured workloads require it; network filesystems and distributed/high-throughput deployment are outside the SQLite scope.
-- Add workspace, role, agent-version and proposed-action context where needed. Current task profiles aggregate both interaction directions.
+The product remains a collaboration diagnosis and recovery-validation layer for multi-agent systems, delivered as an embeddable Python SDK. Native harnesses already provide orchestration, approvals, tracing and recovery. Reusable diagnosis and evidence rules are a candidate benefit to measure, not a claim of exclusive capabilities.
 
-## Next: production task experience
+| Deliverable | Scope | Acceptance |
+|---|---|---|
+| Collaboration cases | Versioned authored cases cover legitimate rejection, goal violation despite bilateral benefit, shared dependency failure, persistent harm, identity/model changes, stale evidence, recovery and third-party impact | Validate all cases; blind exports omit gold labels, explanatory titles and future observations |
+| Paired evaluation | Native harness with full prompt/hooks versus the same setup plus SDK context; identical history, policy and total budget | Reject incomplete or mismatched runs; report decision errors, attribution and measured usage without inventing unknown costs |
+| SDK evaluation bridge | Fresh prefix-isolated tracker with caller-supplied backend, shared decision callback and explicit usage accounting | No gold-derived assessments, no automatic advice-to-hold conversion, no cross-case state or future evidence |
+| Agents API observation adapter | Explicit original-task and ordered-pair binding, selected provider metadata, separate host evidence and stable source identity | Synthetic replay, SQLite reopen deduplication, changed bindings rejected, lifecycle completion never becomes business success |
+| Position and workflow | README and this roadmap state what is implemented, what is tested and what remains unmeasured | Keep users in the original host task; preserve observation mode and host authority |
 
-- Embed the card and queue in a real host's original task screen, with authenticated actions and current host execution status. Keep relationship graphs and scores in a diagnostic detail view.
-- Validate verified resolution, partial recovery, failed recovery and host continuation in the actual user flow, including repeated visits and restarts.
-- Add an evidence-preserving correction workflow that records why an assessment changed and recomputes affected diagnoses.
-- Validate whether the user understands the issue and next action without interpreting numerical scores.
+Run the [evaluation protocol](EVALUATION.md) and [adapter walkthrough](AGENTS_API_ADAPTER.md). The evaluator scores decisions on fixed histories; it does not measure live task success, actual pauses, recovery time or real group behavior. Scorer self-checks use explicitly synthetic arithmetic inputs and are not published as model results. The first event fixtures follow documented provider fields but are not a captured live run or comprehensive schema conformance suite.
 
-The 0.5.0 HTML preview is a local, read-only demonstration using synthetic observations. A production web client and authenticated execution controls remain planned.
+The evaluator's `continue / investigate / hold` labels describe the **proposed next action** under the shared policy. `investigate` is an evidence request, not an actual execution pause. Tracker `review`, unknown evidence or a low event-count confidence must not be mechanically converted into `hold`. A task failure is a task observation, not proof that either agent caused it.
 
-## Validate before enabling automatic intervention
+## Next acceptance gate: one real host and a strong native baseline
 
-Compare a baseline without this SDK, deterministic rules, and rules plus model assessment on the same labeled tasks. Include:
+1. **Capture and bind:** use one existing OpenAI Agents API multi-agent task with permitted observation access. Retain a redacted stream and host evidence; verify task/agent mappings and reconnect/replay behavior. Keep model credentials and execution authority in the host.
+2. **Agree the rubric:** review the authored cases, action-specific labels and a held-out extension before comparing models. Freeze the native prompt, hooks, model version, sampling settings, harness version, total token/cost budget and SDK revision. Give the native arm full history and normal diagnostic/verification instructions.
+3. **Run both arms:** use the same observations and budget, account for SDK assessments and retries, retain input/configuration digests and declared run provenance. Missing usage remains unknown. If extra budget is studied, report it as a separate experiment.
+4. **Review disagreement:** inspect false holds, missed holds, evidence requests, unsupported pair attribution and cases where SDK state conflicts with host facts. Validate semantic labels with humans; do not optimize against these public fixtures alone.
+5. **Test the actual workflow:** in the original task screen, inspect the issue and evidence, apply one host-authorized check, record its new verification, then confirm the original task outcome. Measure task success, actual pauses, repeated work, recovery time, human interventions and total cost from host receipts; the offline decision scorer cannot supply those outcomes.
 
-| Scenario | Expected outcome |
-|---|---|
-| A reviewer correctly rejects an incorrect proposal | Necessary review is not punished as harmful cooperation |
-| Both agents benefit while violating the user goal | Bilateral benefit does not mask the goal violation |
-| A shared upstream dependency fails | Facts distinguish infrastructure failure from unsupported blame |
-| A severe unresolved incident is followed by small successes | The incident remains visible until directly verified |
-| A new agent, changed model or stale evidence is introduced | Uncertainty and provenance remain visible |
-| Recovery fails and a permitted reassignment later succeeds | Evidence and the original task remain connected |
-| A process restarts while recovery is active | The existing plan and restrictions remain visible without repeating external execution |
+Only after this gate should the project claim incremental benefit or choose any automated intervention policy. No live model invocation or production execution is required by the current offline checks. Live runs need an available host session, protected credentials, agreed model configuration and an explicit cost ceiling.
 
-Measure task success, false pauses, missed issues, repeated work, time to recovery, human intervention count and incremental model cost. Do not use average relationship score as the success criterion. Select intervention policies only after this comparison; the SDK remains in observation mode.
+## Then: multi-agent structure and targeted reliability
+
+- Use observed failures to define task dependencies, directed role/version identities and shared upstream evidence. The current bilateral score and connected low-score regions are insufficient for causal cluster diagnosis. Add a detector only with labeled cases and a measurable benefit over the native baseline.
+- Preserve original assessments when adding corrections or deliberate model/prompt re-evaluation. Version interpretations and compare them without silently rewriting history.
+- Measure checkpoint size, write latency and contention; implement retention/export when the measured workload requires it. Unresolved evidence and event deduplication must survive archival.
+- Add a durable notification outbox only when a real host requires delivery guarantees beyond querying committed incidents. Current callbacks remain best-effort.
+- Embed concise issue cards in the original host task before building any standalone UI. Validate that users understand the evidence and next step without interpreting a relationship score.
+- Consider distributed storage only after local workload measurements justify it. The SDK does not currently coordinate a distributed agent cluster.
+
+## User experience acceptance
+
+The host connects events once. The user stays on the original task and sees: **what happened, what is supported by evidence, what remains uncertain, and one suggested next step**. Details expose the original observations and separate assessments. If the host performs a check, the same card shows its result and the original task's actual continuation state. No user is asked to score agents manually or navigate a second orchestration console.
+
+The existing HTML preview is a local read-only demonstration. Browser visual acceptance in this environment remains incomplete because local file previews were blocked by browser policy. Synthetic content/escaping checks do not replace host usability testing.
 
 ## Known limits
 
@@ -85,5 +91,5 @@ Measure task success, false pauses, missed issues, repeated work, time to recove
 - Callbacks have no durable outbox or exactly-once delivery guarantee. Hosts can query committed incidents after restart.
 - Mock fixtures and HTTP request mocks do not establish real-model quality. Tracker confidence is an event-count heuristic, not calibrated accuracy.
 - Low-score connected regions do not prove competition escalation, intent or causality.
-- No automatic external task execution, authentication layer, production web client or complete framework adapter. The local host example and read-only preview are reference integrations.
-- No measured token usage, monetary cost or empirical repair success probabilities yet.
+- No automatic external task execution, authentication layer, production web client or complete live harness integration. The initial Agents API adapter has synthetic contract checks; the local host example and read-only preview remain reference integrations.
+- The evaluation format accepts measured usage, but no live comparative token usage, monetary cost, task-success improvement or empirical repair success probability has been established.
