@@ -1,4 +1,4 @@
-# Agent Relationship 0.6.0
+# Agent Relationship 0.6.1
 
 [English](#english) · [中文](#中文)
 
@@ -25,6 +25,12 @@ historical defect with the original HTTP/database tests: two failures before the
 fix and two passes afterward. It also exposed a workflow gap: a passing host test
 cannot close an SDK incident when the collaboration assessment is unavailable.
 This is project integration evidence, not a measured advantage over native Codex.
+
+Version 0.6.1 fixes the [read-only result presentation](docs/HOST_VERIFICATION_VIEWS.md):
+task cards show the bound host verification and its collaboration assessment
+separately, even before a recovery plan can complete. A passed host check with an
+unknown assessment points to reviewing that assessment. Scores, incident closure,
+permissions and persisted schemas are unchanged.
 
 ### Install and try the complete offline example
 
@@ -205,6 +211,11 @@ SDK 默认只做观察和诊断。它不执行任务，也不授予权限；宿�
 复现历史缺陷：修复前两项失败，修复后相同两项通过。同时发现接入缺口：
 宿主测试已通过，但协作评估不可用时，SDK 仍不能关闭原问题。本轮是项目接入
 证据，尚未证明相对原生 Codex 的增益。
+
+0.6.1 修正[只读结果展示](docs/HOST_VERIFICATION_VIEWS.md)：恢复方案尚未结束时，
+原任务也能分别显示已绑定的宿主核验结果和协作评估。宿主复测已通过、评估仍
+未知时，下一步指向核对评估，避免重复提示执行核验。评分、问题关闭、执行权限
+和持久化格式保持不变。
 
 ### 从完整离线示例开始
 

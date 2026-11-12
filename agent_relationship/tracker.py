@@ -1,5 +1,5 @@
 """
-Agent Relationship — RelationshipTracker v0.6.0
+Agent Relationship — RelationshipTracker v0.6.1
 
 面向开发者的公开 API:
   track / health / can_cooperate / network / history
@@ -387,6 +387,7 @@ class RelationshipTracker:
         metadata = self._engine._events.get(r.event_id, (None, {}))[1]
         return {
             "event_id": r.event_id, "task_id": r.task_id, "timestamp": r.timestamp,
+            "sequence": self._engine.recovery._event_order.get(r.event_id),
             "action": r.interaction_type, "initiator": r.initiator, "target": r.target,
             "context": copy.deepcopy(r.context), "result": copy.deepcopy(r.context.get("result")),
             "narrative": copy.deepcopy(r.context.get("narrative")), "impact_a": r.impact_a, "impact_b": r.impact_b,

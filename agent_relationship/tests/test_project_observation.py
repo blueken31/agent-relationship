@@ -47,6 +47,10 @@ class ProjectObservationTest(unittest.TestCase):
             self.assertEqual({i["assessment"]["category"] for i in view["incidents"]},
                              {"task_failure", "evidence_needed"})
             self.assertEqual(view["open_incident_count"], 2)
+            self.assertEqual(view["summary"], "宿主复测已通过，协作评估待核对")
+            self.assertEqual(view["primary_action"]["kind"], "inspect_assessment")
+            self.assertTrue(all(c["handling"]["state"] == "awaiting_assessment"
+                                for c in view["incidents"]))
         self.assertTrue(all(not p["grants_permission"] for p in report["plans"]))
 
     def test_setup_errors_skips_missing_cases_and_other_failures_never_dispatch(self):

@@ -82,7 +82,7 @@ evidence/receipts, exact model/assessment configuration and an agreed cost ceili
 The next work should run that bounded comparison and inspect its disagreements,
 before expanding generic infrastructure.
 
-## Current evidence: first 2CarsAI project observation
+## Completed evidence: first 2CarsAI project observation
 
 The [2CarsAI #238 observation report](2CARSAI_OBSERVATION.md) records an actual
 HTTP/PostgreSQL/Redis reproduction: the same two original tests fail before the
@@ -97,12 +97,23 @@ not a captured multi-agent trace or a native-versus-SDK quality comparison. The
 existing native reviewer found the defect before this study. Unknown usage remains
 unknown, and no model-accuracy, token-saving or recovery-time uplift is claimed.
 
-The immediate follow-up is to separate the presentation and treatment of verified
-host results from unavailable collaboration assessments, preserving source and
-task boundaries. An unavailable assessor must not turn a passing original task
-into a request to repeat execution. Decide the bounded host-verification contract
-before changing incident closure. Then capture an authorized real task's events
-and run the capable native comparison; Railway is optional infrastructure.
+## Current batch: 0.6.1 host-result presentation
+
+[PR #6](https://github.com/blueken31/agent-relationship/pull/6) merged at `f6f11db`,
+with passing [main CI](https://github.com/blueken31/agent-relationship/actions/runs/43203772368).
+The [read-only projection correction](HOST_VERIFICATION_VIEWS.md) separates a
+strictly bound host result from the collaboration assessment before plan completion.
+Passed host checks with unknown assessments point to assessment review; the
+example presents the associated missing assessment within the original task card.
+Competing receipts, missing evidence, other task/pair issues and newer adverse
+events remain visible. Incident closure, scoring, permissions and storage schemas
+are unchanged. The retained 2CarsAI checkpoint supplies a read-only regression
+check without repeating its original tests or claiming a new semantic result.
+
+Next, capture an authorized real task's events and run the capable native
+comparison. Whether a trusted host result should independently close a bounded
+`task_failure` remains a separate contract decision, not implied by a display fix.
+Railway is optional infrastructure; no automatic intervention is enabled.
 
 ## Next acceptance gate: one real host and a strong native baseline
 
