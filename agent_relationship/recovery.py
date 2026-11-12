@@ -192,6 +192,25 @@ class RecoveryLedger:
                 and (task_id is None or i["task_id"] == task_id)
             ])
 
+    def list_plans(self, task_id: Optional[str] = None, incident_id: Optional[str] = None) -> List[Dict]:
+        """Read existing plans without creating one or advancing the clock."""
+        for value in (task_id, incident_id):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError("plan filters must be nonempty strings")
+        with self._lock:
+            return deepcopy([
+                plan for plan in self._plans.values()
+                if (task_id is None or plan["task_id"] == task_id)
+                and (incident_id is None or plan["incident_id"] == incident_id)
+            ])
+
+    def get_plan(self, plan_id: str) -> Optional[Dict]:
+        """Return a detached existing plan, or None for an unknown ID."""
+        if not isinstance(plan_id, str) or not plan_id.strip():
+            raise ValueError("plan_id must be a nonempty string")
+        with self._lock:
+            return deepcopy(self._plans.get(plan_id))
+
     def link_incident(self, incident_id: str, task_id: str, reason: str) -> Dict:
         """Record a host-supplied task correction for an unscoped open issue.
 

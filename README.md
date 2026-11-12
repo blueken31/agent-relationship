@@ -1,4 +1,4 @@
-# Agent Relationship 0.4.0
+# Agent Relationship 0.5.0
 
 [English](#english) · [中文](#中文)
 
@@ -18,10 +18,12 @@ For this source checkout:
 python -m pip install -e .
 PYTHONPATH=. python examples/task_recovery.py
 PYTHONPATH=. python examples/durable_recovery.py
+PYTHONPATH=. python examples/host_task_recovery.py
+PYTHONPATH=. python examples/task_review_preview.py --output /tmp/task-review.html
 python -m unittest discover -s agent_relationship/tests -v
 ```
 
-The example uses explicit simulated fixtures. It demonstrates a failed handoff, an evidence card, a single bounded check, a verified result and retention of the original task ID. It makes no model calls and does not execute an external task. The host's authorization and verification are clearly marked demo functions.
+The examples use explicit simulated fixtures. They demonstrate a failed handoff, an evidence card, a single bounded check, a verified result and retention of the original task ID. They make no model calls and do not execute external tasks. Host authorization, verification and the local continuation result are marked as simulations.
 
 ### Record evidence and inspect the original task
 
@@ -90,6 +92,37 @@ Supported proposal types are `verify_handoff`, `restricted_retest` and `reassign
 
 See [the executable example](examples/task_recovery.py) for the full sequence.
 
+### Bring the diagnosis back to the original task
+
+The read-only task APIs provide a compact user-facing view without creating a recovery proposal or making a model call:
+
+```python
+view = tracker.task_view("report-001")
+print(view["recovery_status"], view["primary_action"])
+print(tracker.task_queue())  # Pending tasks, plus separately listed unlinked incidents.
+print(tracker.repair_plans(task_id="report-001"))
+# tracker.repair_plan(plan_id) reads one existing plan, or returns None.
+```
+
+A task view gathers incidents across all Agent pairs for that task. Each card separates the host's observed result from the assessment, shows current handling and one recommended next action, and retains evidence IDs for `event()` detail reads. Opening a card does not authorize, begin or retry its plan. Reads return detached snapshots and do not advance the durable checkpoint revision.
+
+| View or plan state | Meaning for the user |
+|---|---|
+| `needs_attention` | An issue needs review, evidence or a new handling decision |
+| `waiting` | An existing attempt is waiting for a host result or a cooldown; a proposed plan needing authorization is `needs_attention` |
+| `resolved` | Recorded task incidents have been verified as resolved; the host still owns continuation and completion |
+| `observed` | Task observations exist with no recorded incidents |
+| `no_evidence` | No observations for this task have been recorded |
+| Plan `started` | An attempt was recorded; query the host's execution result before deciding what to do next |
+
+Failed, partial and cancelled attempts retain their outcome and any cooldown in the card. Completed checks retain their result evidence separately from the original observation. Missing evidence remains in the attention queue; tied historical plan timestamps require history review instead of guessing an order. A started plan with new adverse evidence requires another review. Resolving one incident leaves the task in the queue while another is still open. Unlinked incidents remain visible until the host explicitly associates them with an original task.
+
+The [host continuation example](examples/host_task_recovery.py) uses a separate local host database. For a new continuation, it verifies the latest task view, checks explicit host authorization and the current task step/revision, then commits a simulated local result and its receipt together. Deduplication identifies the **original host task, blocked step and revision**, so different recovery plans cannot execute the same step twice. After restart, a committed receipt returns the original result; later incidents do not hide that receipt. A failure before commit leaves no partial local result. An explicitly unknown external outcome remains blocked for reconciliation, even if the same task is registered again.
+
+The SDK check and host commit are in separate databases; this example does not make them atomic. A real host must apply its own concurrency and authorization policy. For external effects, use the provider's stable operation ID and result lookup: an ambiguous outcome requires reconciliation before a retry. The local receipt example does not establish exactly-once external execution.
+
+Open the [standalone read-only card preview](docs/task-review-preview.html) in a browser, or regenerate it with [the example script](examples/task_review_preview.py). It uses simulated SDK observations, responsive layout, expandable evidence and next-action guidance; it contains no execution controls or network dependencies. CI checks that the saved preview matches the generated output.
+
 ### Assessments, scores and notifications
 
 - Each event uses one bilateral assessment for the two participants and the shared goal. Status, source, model, schema version, brief reason and safe error category remain visible.
@@ -134,7 +167,7 @@ Use a local file on one machine. Writes are serialized, including model evaluati
 
 Risk-change callbacks run after a successful commit and remain best-effort. A crash between commit and callback delivery can lose a notification; reopening or retrying the same event does not automatically deliver it again. There is no durable notification outbox yet. The committed incident and evidence remain queryable, so hosts should inspect pending incidents rather than rely solely on callback delivery. Keep untrusted agents from writing host verification fields or authorization decisions.
 
-This release ships SDK data and a console example, not a web interface or framework-specific integration. Task views remain bilateral; full direction-, role-, version- and workspace-specific policy is future work. Live model quality, recovery success rates, token usage and cost have not been benchmarked. See [the roadmap](docs/ROADMAP.md).
+This release ships the SDK, a local host continuation example and a read-only HTML preview. A production web client, authentication and framework-specific integration remain future work. Relationship scores remain bilateral; task cards gather incidents across the task's Agent pairs. Full direction-, role-, version- and workspace-specific policy is still pending. Live model quality, recovery success rates, token usage and cost have not been benchmarked. See [the roadmap](docs/ROADMAP.md).
 
 ## 中文
 
@@ -148,6 +181,8 @@ SDK 默认只做观察和诊断。它不执行任务，也不授予权限；宿�
 python -m pip install -e .
 PYTHONPATH=. python examples/task_recovery.py
 PYTHONPATH=. python examples/durable_recovery.py
+PYTHONPATH=. python examples/host_task_recovery.py
+PYTHONPATH=. python examples/task_review_preview.py --output /tmp/task-review.html
 python -m unittest discover -s agent_relationship/tests -v
 ```
 
@@ -182,6 +217,36 @@ with RelationshipTracker(storage_path="relationship.sqlite3") as tracker:
 
 持久化模式须使用 `RelationshipTracker` 公开接口；`tracker.engine` 会拒绝访问，避免直接修改底层状态而未写入数据库。模型后端不能在评估期间递归修改同一持久化实例，以免嵌套事件在外层事务提交前发出通知。
 
+### 原任务中的异常卡片与接续过程
+
+0.5.0 增加只读任务视图和待处理队列。使用者先看到“发生了什么、当前如何处理、下一步建议”，展开后再查看依据：
+
+```python
+view = tracker.task_view("report-001")
+print(view["recovery_status"], view["primary_action"])
+print(tracker.task_queue())
+print(tracker.repair_plans(task_id="report-001"))
+```
+
+`task_view()` 汇总同一任务不同 Agent 对的异常，区分宿主观察与评估判断；`task_queue()` 返回待处理任务摘要，并单列尚未关联任务的异常。`repair_plans()` 和 `repair_plan(plan_id)` 查询已有方案，无须为了显示页面调用会创建方案的 `propose_repair()`。查询不调用模型、不改变快照版本，也不会开始或重试方案；完整证据仍通过 `event()` 获取。
+
+| 状态 | 使用者应如何理解 |
+|---|---|
+| `needs_attention` | 需要核对依据或决定处理方式 |
+| `waiting` | 等待宿主执行结果或冷却结束；待授权的方案属于 `needs_attention` |
+| `resolved` | 该任务已记录的异常核验通过，原任务由宿主决定接续与完成 |
+| `observed` | 已有任务观察，暂未记录异常 |
+| `no_evidence` | 尚无该任务的观察记录 |
+| 方案 `started` | 已记录一次尝试，下一步先查询宿主执行结果 |
+
+失败、部分改善和取消仍保留原结果及冷却时间，核验结果依据与原始观察分别展示。依据缺失时任务仍留在待处理队列；历史方案时间相同且无法确认先后时，提示核对历史，不猜测最新方案。开始后出现新的不利依据，会提示重新核对；解决一个异常后若仍有其他未解决异常，任务继续留在队列。页面首屏只给一个下一步建议，具体授权与操作由宿主承接。
+
+[宿主接续示例](examples/host_task_recovery.py) 演示“核验异常 → 检查当前原任务 → 宿主授权 → 接续原步骤 → 重开后读取同一结果”。示例使用独立的本地宿主数据库，将模拟结果与执行回执在同一事务中提交；去重标识绑定**原任务、受阻步骤和宿主版本**，不同恢复方案不会让同一步骤重复执行。提交前失败会回滚，提交后重开可读取原回执，后来新增的异常不会隐藏已记录结果。外部结果被标记为未知后保持待对账状态，重新登记同一任务也不能清除此限制。
+
+SDK 状态检查与宿主提交之间没有跨库原子保证，真实宿主仍须落实并发控制和权限核验。外部操作要用稳定的操作 ID 查询结果；结果不明时先对账，不能因未收到响应就直接重试。本地示例不承诺外部操作恰好执行一次。
+
+在浏览器打开[只读任务卡片预览](docs/task-review-preview.html)，或使用[示例脚本](examples/task_review_preview.py) 重新生成。桌面与手机布局均以问题、处理状态和一个建议动作为主，依据可展开；数据与宿主行为均为模拟，没有执行按钮或网络依赖。CI 会核对保存的预览与脚本输出一致。
+
 ### 诊断含义与升级注意事项
 
 - `assessed` 表示完成评估，`unknown` 表示证据不足、输出非法或模型不可用；未知不等于健康，也不自动增加信任。
@@ -197,7 +262,7 @@ with RelationshipTracker(storage_path="relationship.sqlite3") as tracker:
 
 ### 当前边界
 
-本批提供 SDK 和命令行示例，尚无网页操作界面、自动执行器或框架专用连接器。默认内存模式在重启后仍会丢失状态；配置 `storage_path` 才会保存。SQLite 保存当前完整快照，尚无历史快照回放、导出归档或有界保留机制。`max_history` 只限制历史展示和评分窗口，完整证据、去重记录、内存和快照大小仍会随事件增长。加载时会依据已存评估核对评分计算，不会调用模型；读取成本也会随保留的证据增长。
+本批提供 SDK、本地宿主接续示例和只读 HTML 卡片预览；生产网页客户端、认证和框架专用连接器仍待接入。默认内存模式在重启后仍会丢失状态；配置 `storage_path` 才会保存。SQLite 保存当前完整快照，尚无历史快照回放、导出归档或有界保留机制。`max_history` 只限制历史展示和评分窗口，完整证据、去重记录、内存和快照大小仍会随事件增长。加载时会依据已存评估核对评分计算，不会调用模型；读取成本也会随保留的证据增长。
 
 当前面向单机本地文件。写操作串行化，模型评估期间也会占用写事务，因此慢模型可能阻塞其他写入；不面向高吞吐、网络文件系统或分布式部署。存储未自动加密，宿主负责保护数据库和备份。API 凭据、后端对象和回调函数不写入快照，但传入的事件上下文会保留。
 

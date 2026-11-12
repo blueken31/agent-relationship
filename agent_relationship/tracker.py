@@ -1,5 +1,5 @@
 """
-Agent Relationship — RelationshipTracker v0.4.0
+Agent Relationship — RelationshipTracker v0.5.0
 
 面向开发者的公开 API:
   track / health / can_cooperate / network / history
@@ -9,6 +9,7 @@ Agent Relationship — RelationshipTracker v0.4.0
 import io
 import copy
 import math
+import time
 from contextlib import contextmanager
 from functools import wraps
 from os import PathLike
@@ -493,6 +494,52 @@ class RelationshipTracker:
     def incidents(self, task_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict]:
         """Task-linked diagnostic cards, including evidence and current recovery state."""
         return self._engine.recovery.list_incidents(task_id, status)
+
+    @_snapshot_read
+    def repair_plans(self, task_id: Optional[str] = None, incident_id: Optional[str] = None) -> List[Dict]:
+        """Read plans without creating a proposal, authorizing or retrying it."""
+        return self._engine.recovery.list_plans(task_id, incident_id)
+
+    @_snapshot_read
+    def repair_plan(self, plan_id: str) -> Optional[Dict]:
+        """Read one existing plan, including its state after a restart."""
+        return self._engine.recovery.get_plan(plan_id)
+
+    def _task_projection_inputs(self, task_id=None):
+        incidents = self._engine.recovery.list_incidents(task_id)
+        plans = self._engine.recovery.list_plans(task_id)
+        linked_ids = {event_id for incident in incidents for event_id in incident["evidence_ids"]}
+        linked_ids.update(incident["resolution_event_id"] for incident in incidents
+                          if incident["resolution_event_id"] is not None)
+        events = {
+            event_id: self._event_snapshot(record)
+            for event_id, record in self._engine.event_records.items()
+            if task_id is None or record.task_id == task_id or event_id in linked_ids
+        }
+        return incidents, plans, events
+
+    @_snapshot_read
+    def task_view(self, task_id: str) -> Dict:
+        """Project task diagnostics; this never reports host execution complete.
+
+        A resolved recovery means the recorded incidents were verified, not that
+        the host has authorized or finished the original task. Full evidence is
+        available separately through event().
+        """
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError("task_id must be a nonempty string")
+        from .task_views import project_task
+
+        return project_task(task_id, *self._task_projection_inputs(task_id),
+                            now=time.time(), cooldown_seconds=self._engine.recovery.COOLDOWN_SECONDS)
+
+    @_snapshot_read
+    def task_queue(self) -> Dict:
+        """Read unresolved task summaries, with unlinked incidents kept visible."""
+        from .task_views import project_queue
+
+        return project_queue(*self._task_projection_inputs(),
+                             now=time.time(), cooldown_seconds=self._engine.recovery.COOLDOWN_SECONDS)
 
     @_snapshot_write
     def link_incident(self, incident_id: str, task_id: str, reason: str) -> Dict:
