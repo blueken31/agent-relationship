@@ -33,5 +33,7 @@ jobs:
         run: python -m unittest discover -s agent_relationship/tests -v
       - name: Run offline recovery example
         run: python examples/task_recovery.py
+      - name: Verify restart recovery
+        run: python examples/durable_recovery.py
       - name: Check whitespace
         run: git diff --check

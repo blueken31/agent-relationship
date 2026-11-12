@@ -6,6 +6,8 @@ The default Mock backend provides explicit simulated fixtures.
 
 from .tracker import RelationshipTracker
 from .assessment import Assessment
+from .storage import StorageError, StorageVersionError
+from .state import StateError
 from .types import (
     TrackResult,
     Health,
@@ -18,6 +20,9 @@ from .types import (
 __all__ = [
     "RelationshipTracker",
     "Assessment",
+    "StorageError",
+    "StorageVersionError",
+    "StateError",
     "TrackResult",
     "Health",
     "NetworkReport",
@@ -26,4 +31,4 @@ __all__ = [
     "RepairPath",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
