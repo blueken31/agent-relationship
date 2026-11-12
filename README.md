@@ -20,6 +20,12 @@ The near-term priority is evidence of better collaboration decisions: legitimate
 
 The checkout also provides [prepared evaluation sessions](docs/EVALUATION_RUNS.md): review the exact inputs/configuration and budgets before host calls, keep completed receipts after interruption, and reconcile uncertain outcomes before continuing. This tooling reserves work locally; the host must enforce provider limits and supply actual usage. No live comparative result has been measured.
 
+The first [2CarsAI project observation](docs/2CARSAI_OBSERVATION.md) reproduced a
+historical defect with the original HTTP/database tests: two failures before the
+fix and two passes afterward. It also exposed a workflow gap: a passing host test
+cannot close an SDK incident when the collaboration assessment is unavailable.
+This is project integration evidence, not a measured advantage over native Codex.
+
 ### Install and try the complete offline example
 
 For this source checkout:
@@ -194,6 +200,11 @@ SDK 默认只做观察和诊断。它不执行任务，也不授予权限；宿�
 近期优先验证合理否决、共同依赖故障、目标违规、未解决损害与有效恢复。角色、方向及依赖关系用于保留调查线索；当前双边评分还不能自动判定整个集群的故障根因。
 
 仓库还提供[可核对、可接续的评测批次](docs/EVALUATION_RUNS.md)：运行前查看输入、配置和预算；中断后保留已完成结果，结果不明时先核对再继续。工具按声明上限预留本地任务预算，实际模型调用限制与用量记录仍由宿主落实，真实对照结果尚待测量。
+
+首轮 [2CarsAI 项目观察](docs/2CARSAI_OBSERVATION.md)已用原项目 HTTP/数据库测试
+复现历史缺陷：修复前两项失败，修复后相同两项通过。同时发现接入缺口：
+宿主测试已通过，但协作评估不可用时，SDK 仍不能关闭原问题。本轮是项目接入
+证据，尚未证明相对原生 Codex 的增益。
 
 ### 从完整离线示例开始
 

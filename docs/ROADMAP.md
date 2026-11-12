@@ -60,7 +60,7 @@ Run the [evaluation protocol](EVALUATION.md) and [adapter walkthrough](AGENTS_AP
 
 The evaluator's `continue / investigate / hold` labels describe the **proposed next action** under the shared policy. `investigate` is an evidence request, not an actual execution pause. Tracker `review`, unknown evidence or a low event-count confidence must not be mechanically converted into `hold`. A task failure is a task observation, not proof that either agent caused it.
 
-## Current batch: prepare and resume the real comparison
+## Completed: prepare and resume the real comparison
 
 The [prepared session workflow](EVALUATION_RUNS.md) makes the existing evaluation
 usable by an actual host without losing earlier results or silently repeating an
@@ -82,9 +82,31 @@ evidence/receipts, exact model/assessment configuration and an agreed cost ceili
 The next work should run that bounded comparison and inspect its disagreements,
 before expanding generic infrastructure.
 
+## Current evidence: first 2CarsAI project observation
+
+The [2CarsAI #238 observation report](2CARSAI_OBSERVATION.md) records an actual
+HTTP/PostgreSQL/Redis reproduction: the same two original tests fail before the
+historical repair and pass afterward. Fresh host verification was then recorded
+against SDK plans. Deduplication, SQLite reopen and task binding held. With no
+assessment provider configured, the host's passing test did not resolve the SDK
+incidents; each task also gained an `evidence_needed` incident. Runtime rules
+were left unchanged and no mock positive assessment was substituted.
+
+This is one known defect with two parameter variants and analysis-role identities,
+not a captured multi-agent trace or a native-versus-SDK quality comparison. The
+existing native reviewer found the defect before this study. Unknown usage remains
+unknown, and no model-accuracy, token-saving or recovery-time uplift is claimed.
+
+The immediate follow-up is to separate the presentation and treatment of verified
+host results from unavailable collaboration assessments, preserving source and
+task boundaries. An unavailable assessor must not turn a passing original task
+into a request to repeat execution. Decide the bounded host-verification contract
+before changing incident closure. Then capture an authorized real task's events
+and run the capable native comparison; Railway is optional infrastructure.
+
 ## Next acceptance gate: one real host and a strong native baseline
 
-1. **Capture and bind:** use one existing OpenAI Agents API multi-agent task with permitted observation access. Retain a redacted stream and host evidence; verify task/agent mappings and reconnect/replay behavior. Keep model credentials and execution authority in the host.
+1. **Capture and bind:** use one accessible real multi-agent development task with permitted observation access. Retain a redacted stream and host evidence; verify task/agent mappings and reconnect/replay behavior. Use the Agents API adapter only for actual provider events; other hosts need an explicit mapping and must not manufacture provider envelopes. Keep model credentials and execution authority in the host.
 2. **Agree the rubric:** review the authored cases, action-specific labels and a held-out extension before comparing models. Freeze the native prompt, hooks, model version, sampling settings, harness version, total token/cost budget and SDK revision. Give the native arm full history and normal diagnostic/verification instructions.
 3. **Run both arms:** use the same observations and budget, account for SDK assessments and retries, retain input/configuration digests and declared run provenance. Missing usage remains unknown. If extra budget is studied, report it as a separate experiment.
 4. **Review disagreement:** inspect false holds, missed holds, evidence requests, unsupported pair attribution and cases where SDK state conflicts with host facts. Validate semantic labels with humans; do not optimize against these public fixtures alone.

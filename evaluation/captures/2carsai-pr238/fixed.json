@@ -1,0 +1,18 @@
+{
+  "source_revision": "91b814fbed164c5781d7cbd58e8d7e3296e13f00",
+  "started_at": "2026-11-12T10:37:49.702221+00:00",
+  "finished_at": "2026-11-12T10:38:01.001912+00:00",
+  "exit_code": 0,
+  "test_file_sha256": "123a26563980ed1ebe8a58d0dd905067f351885475d8d14a4bbecec6ce38b9f3",
+  "junit_sha256": "8d849cbcbf4ad975398037956177d1ff78d2210f7b2fb09463ac546b4d8ed717",
+  "cases": [
+    {
+      "name": "test_resumed_dealer_task_keeps_original_contact_order_and_memos[False]",
+      "status": "passed"
+    },
+    {
+      "name": "test_resumed_dealer_task_keeps_original_contact_order_and_memos[True]",
+      "status": "passed"
+    }
+  ]
+}
