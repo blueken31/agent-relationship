@@ -1,6 +1,6 @@
 # Agent Relationship development roadmap
 
-The 0.3.0 foundation was merged in [PR #1](https://github.com/blueken31/agent-relationship/pull/1), with merge commit `cee0e4d` and passing main CI. This roadmap describes the subsequent 0.4.0 implementation and the remaining work. A completed SDK mechanism is not a claim of production readiness or real-model effectiveness.
+The 0.3.0 foundation was merged in [PR #1](https://github.com/blueken31/agent-relationship/pull/1) at `cee0e4d`. The 0.4.0 durable checkpoints were merged in [PR #2](https://github.com/blueken31/agent-relationship/pull/2) at `427719b`, with passing [main CI](https://github.com/blueken31/agent-relationship/actions/runs/43181777529). This roadmap describes the subsequent 0.5.0 implementation and remaining work. A completed SDK mechanism is not a claim of production readiness or real-model effectiveness.
 
 ## Completed foundation: 0.3.0
 
@@ -14,7 +14,7 @@ The 0.3.0 foundation was merged in [PR #1](https://github.com/blueken31/agent-re
 
 The SDK records and diagnoses. It does not execute a proposed action, independently validate a host assertion or grant additional permission. Host authorization and result verification remain outside the SDK.
 
-## Current batch: 0.4.0 durable checkpoints
+## Completed persistence: 0.4.0
 
 | Area | Implemented scope | Validation |
 |---|---|---|
@@ -26,9 +26,23 @@ The SDK records and diagnoses. It does not execute a proposed action, independen
 
 This is restoration of the current checkpoint. It does not re-evaluate historical events, keep a history of checkpoints, resume external execution or guarantee notification delivery. An uncommitted operation may need to be retried after interruption; a committed event with the same ID is not counted again.
 
+## Current batch: 0.5.0 original-task continuity
+
+| Area | Implemented scope | Validation |
+|---|---|---|
+| Read-only task view | `task_view()` gathers all task incidents into compact cards with observed facts, separate assessments, handling state, evidence references and one next action | Task-view and public-query tests |
+| Pending queue | `task_queue()` returns unresolved task summaries and keeps unlinked incidents visible | Multi-pair, multi-task and unlinked-incident cases |
+| Plan inspection | `repair_plans()` and `repair_plan()` read existing plans without creating proposals, advancing cooldown state or invoking a model | Snapshot/revision and restart checks |
+| Host continuation example | Explicit host authorization and current task checks; original task/step/revision identity; local simulated result and receipt committed together | `test_host_integration.py`, `examples/host_task_recovery.py` |
+| User experience preview | Responsive read-only HTML cards, expandable evidence and simulated lifecycle states | `examples/task_review_preview.py --output /tmp/task-review.html` |
+
+The intended experience is: find the original task → inspect one concise issue and recommendation → let the host perform its authorized check → see the recorded verification → let the host continue the original step. A started plan means its attempt was recorded, not that external execution is running. Resolved incidents do not mean the original task is complete.
+
+The host example's local result and receipt share one transaction. Its SDK readiness check and host commit use separate databases and are not atomic. A real host must supply its own concurrency policy and reconcile ambiguous external outcomes using the external operation's stable ID. No external executor or exactly-once external delivery is supplied.
+
 ## Next: operational integration and evidence lifecycle
 
-- Add one tested host integration that reconnects to the original task after a verified result. Define how the host determines whether an external action already ran before a crash.
+- Connect the reference task view and continuation contract to one real host's permissions, task revisions and external operation receipts. Define its reconciliation path when execution outcome is unknown.
 - Add a durable notification outbox with stable delivery IDs and host deduplication. Current callbacks are best-effort and run after commit; a crash in that interval can lose a notification.
 - Define versioned historical replay and deliberate re-evaluation when model, prompt or scoring policy changes. Preserve original assessments and distinguish them from later interpretations.
 - Bound evidence retention and support export/archival without dropping unresolved incidents or losing event deduplication guarantees.
@@ -36,15 +50,14 @@ This is restoration of the current checkpoint. It does not re-evaluate historica
 - Design a distributed store and coordination protocol only if measured workloads require it; network filesystems and distributed/high-throughput deployment are outside the SQLite scope.
 - Add workspace, role, agent-version and proposed-action context where needed. Current task profiles aggregate both interaction directions.
 
-## Then: user-facing task experience
+## Next: production task experience
 
-- Embed a concise exception card in the original task: observed issue, impact, current handling, one recommended action and expandable evidence.
-- Provide an operator queue for unresolved tasks and waiting decisions. Keep relationship graphs and scores in a diagnostic detail view.
-- Make verified resolution, partial recovery, failed recovery and corrected diagnoses visible without repeated alerts for the same issue.
+- Embed the card and queue in a real host's original task screen, with authenticated actions and current host execution status. Keep relationship graphs and scores in a diagnostic detail view.
+- Validate verified resolution, partial recovery, failed recovery and host continuation in the actual user flow, including repeated visits and restarts.
 - Add an evidence-preserving correction workflow that records why an assessment changed and recomputes affected diagnoses.
 - Validate whether the user understands the issue and next action without interpreting numerical scores.
 
-These are planned interfaces; no web UI ships in 0.4.0.
+The 0.5.0 HTML preview is a local, read-only demonstration using synthetic observations. A production web client and authenticated execution controls remain planned.
 
 ## Validate before enabling automatic intervention
 
@@ -72,5 +85,5 @@ Measure task success, false pauses, missed issues, repeated work, time to recove
 - Callbacks have no durable outbox or exactly-once delivery guarantee. Hosts can query committed incidents after restart.
 - Mock fixtures and HTTP request mocks do not establish real-model quality. Tracker confidence is an event-count heuristic, not calibrated accuracy.
 - Low-score connected regions do not prove competition escalation, intent or causality.
-- No automatic task execution, authentication layer, web interface or complete framework adapter.
+- No automatic external task execution, authentication layer, production web client or complete framework adapter. The local host example and read-only preview are reference integrations.
 - No measured token usage, monetary cost or empirical repair success probabilities yet.

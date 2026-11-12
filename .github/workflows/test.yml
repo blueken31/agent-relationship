@@ -35,5 +35,11 @@ jobs:
         run: python examples/task_recovery.py
       - name: Verify restart recovery
         run: python examples/durable_recovery.py
+      - name: Verify host task continuity
+        run: python examples/host_task_recovery.py
+      - name: Render read-only task preview
+        run: |
+          python examples/task_review_preview.py --output /tmp/task-review.html
+          cmp /tmp/task-review.html docs/task-review-preview.html
       - name: Check whitespace
         run: git diff --check
