@@ -1,0 +1,517 @@
+{
+  "mode": "real_project_tests_with_unassessed_sdk_observation",
+  "sdk_runtime_revision": "40676d0fe8f0e7fe6cac32bb8940c77e627cee65",
+  "native_vs_sdk_experiment": false,
+  "runtime_multiagent_trace_captured": false,
+  "identities": "analysis_roles_not_captured_agent_ids",
+  "provider_calls": 0,
+  "usage": {
+    "input_tokens": null,
+    "output_tokens": null,
+    "cost": null,
+    "currency": null
+  },
+  "checks": {
+    "duplicate_evidence_deduplicated": true,
+    "sqlite_reopen_preserves_tasks": true,
+    "old_failure_rejected": true,
+    "foreign_task_rejected": true,
+    "fresh_host_verification_after_plans": true,
+    "host_regression_recovered": true,
+    "sdk_incidents_resolved": false
+  },
+  "old_failure_rejections": [
+    "evidence must identify the planned recovery action",
+    "evidence must identify the planned recovery action"
+  ],
+  "foreign_task_rejections": [
+    "evidence must belong to the original task and agents",
+    "evidence must belong to the original task and agents"
+  ],
+  "closure_rejections": [
+    "resolution requires a successful, verified assessment",
+    "resolution requires a successful, verified assessment"
+  ],
+  "before_views": [
+    {
+      "task_id": "2carsai-pr238:saved-cluster=false",
+      "recovery_status": "needs_attention",
+      "open_incident_count": 1,
+      "resolved_incident_count": 0,
+      "observed_event_count": 1,
+      "active_plan_count": 0,
+      "missing_evidence_count": 0,
+      "primary_incident_id": "incident_ea584ff4f621464cb154484d4a8f3cae",
+      "primary_action": {
+        "kind": "prepare_repair",
+        "label": "准备核验方案",
+        "incident_id": "incident_ea584ff4f621464cb154484d4a8f3cae",
+        "plan_id": null,
+        "grants_permission": false
+      },
+      "summary": "原任务步骤未完成",
+      "updated_at": 1794479869.6079137,
+      "incidents": [
+        {
+          "id": "incident_ea584ff4f621464cb154484d4a8f3cae",
+          "version": 1,
+          "task_id": "2carsai-pr238:saved-cluster=false",
+          "status": "open",
+          "title": "原任务步骤未完成",
+          "agents": [
+            "analysis-role:implementation",
+            "analysis-role:review"
+          ],
+          "original_task_id": "2carsai-pr238:saved-cluster=false",
+          "task_link_reason": "",
+          "observation": {
+            "event_id": "pr238:07cf7275f5bdd51463e3a0dcf340ad0901efe966e94dc0f4424748d5999120f1:0",
+            "result": "failed",
+            "narrative": "Original regression fails: contract confirmed but its memo is missing."
+          },
+          "assessment": {
+            "category": "task_failure",
+            "reason": "评估未完成，证据不足；请按宿主现有规则处理。",
+            "source": "model",
+            "goal_status": "unknown"
+          },
+          "handling": {
+            "state": "needs_plan",
+            "plan_id": null,
+            "plan_ids": [],
+            "action": "verify_handoff",
+            "last_outcome": null,
+            "retry_after": null,
+            "cooldown_active": false,
+            "evidence_event_id": null,
+            "evidence_event_ids": [],
+            "observation": null,
+            "assessment": null
+          },
+          "next_action": {
+            "kind": "prepare_repair",
+            "label": "准备核验方案",
+            "incident_id": "incident_ea584ff4f621464cb154484d4a8f3cae",
+            "plan_id": null,
+            "grants_permission": false
+          },
+          "evidence_ids": [
+            "pr238:07cf7275f5bdd51463e3a0dcf340ad0901efe966e94dc0f4424748d5999120f1:0"
+          ],
+          "resolution_event_id": null,
+          "missing_evidence_count": 0,
+          "updated_at": 1794479869.6079137
+        }
+      ]
+    },
+    {
+      "task_id": "2carsai-pr238:saved-cluster=true",
+      "recovery_status": "needs_attention",
+      "open_incident_count": 1,
+      "resolved_incident_count": 0,
+      "observed_event_count": 1,
+      "active_plan_count": 0,
+      "missing_evidence_count": 0,
+      "primary_incident_id": "incident_cf30e6768d1e449e9652b4c99efefa4b",
+      "primary_action": {
+        "kind": "prepare_repair",
+        "label": "准备核验方案",
+        "incident_id": "incident_cf30e6768d1e449e9652b4c99efefa4b",
+        "plan_id": null,
+        "grants_permission": false
+      },
+      "summary": "原任务步骤未完成",
+      "updated_at": 1794479869.6177182,
+      "incidents": [
+        {
+          "id": "incident_cf30e6768d1e449e9652b4c99efefa4b",
+          "version": 1,
+          "task_id": "2carsai-pr238:saved-cluster=true",
+          "status": "open",
+          "title": "原任务步骤未完成",
+          "agents": [
+            "analysis-role:implementation",
+            "analysis-role:review"
+          ],
+          "original_task_id": "2carsai-pr238:saved-cluster=true",
+          "task_link_reason": "",
+          "observation": {
+            "event_id": "pr238:07cf7275f5bdd51463e3a0dcf340ad0901efe966e94dc0f4424748d5999120f1:1",
+            "result": "failed",
+            "narrative": "Original regression fails: contract confirmed but its memo is missing."
+          },
+          "assessment": {
+            "category": "task_failure",
+            "reason": "评估未完成，证据不足；请按宿主现有规则处理。",
+            "source": "model",
+            "goal_status": "unknown"
+          },
+          "handling": {
+            "state": "needs_plan",
+            "plan_id": null,
+            "plan_ids": [],
+            "action": "verify_handoff",
+            "last_outcome": null,
+            "retry_after": null,
+            "cooldown_active": false,
+            "evidence_event_id": null,
+            "evidence_event_ids": [],
+            "observation": null,
+            "assessment": null
+          },
+          "next_action": {
+            "kind": "prepare_repair",
+            "label": "准备核验方案",
+            "incident_id": "incident_cf30e6768d1e449e9652b4c99efefa4b",
+            "plan_id": null,
+            "grants_permission": false
+          },
+          "evidence_ids": [
+            "pr238:07cf7275f5bdd51463e3a0dcf340ad0901efe966e94dc0f4424748d5999120f1:1"
+          ],
+          "resolution_event_id": null,
+          "missing_evidence_count": 0,
+          "updated_at": 1794479869.6177182
+        }
+      ]
+    }
+  ],
+  "after_views": [
+    {
+      "task_id": "2carsai-pr238:saved-cluster=false",
+      "recovery_status": "needs_attention",
+      "open_incident_count": 2,
+      "resolved_incident_count": 0,
+      "observed_event_count": 2,
+      "active_plan_count": 1,
+      "missing_evidence_count": 0,
+      "primary_incident_id": "incident_3e103cc645da44758026d993f4a05e06",
+      "primary_action": {
+        "kind": "prepare_repair",
+        "label": "准备核验方案",
+        "incident_id": "incident_3e103cc645da44758026d993f4a05e06",
+        "plan_id": null,
+        "grants_permission": false
+      },
+      "summary": "评估依据不足，等待核验",
+      "updated_at": 1794479881.0127656,
+      "incidents": [
+        {
+          "id": "incident_3e103cc645da44758026d993f4a05e06",
+          "version": 1,
+          "task_id": "2carsai-pr238:saved-cluster=false",
+          "status": "open",
+          "title": "评估依据不足，等待核验",
+          "agents": [
+            "analysis-role:implementation",
+            "analysis-role:review"
+          ],
+          "original_task_id": "2carsai-pr238:saved-cluster=false",
+          "task_link_reason": "",
+          "observation": {
+            "event_id": "pr238:8d849cbcbf4ad975398037956177d1ff78d2210f7b2fb09463ac546b4d8ed717:0",
+            "result": "success",
+            "narrative": "The same original HTTP/PostgreSQL regression passes on the repair commit."
+          },
+          "assessment": {
+            "category": "evidence_needed",
+            "reason": "评估未完成，证据不足；请按宿主现有规则处理。",
+            "source": "model",
+            "goal_status": "unknown"
+          },
+          "handling": {
+            "state": "needs_plan",
+            "plan_id": null,
+            "plan_ids": [],
+            "action": "verify_handoff",
+            "last_outcome": null,
+            "retry_after": null,
+            "cooldown_active": false,
+            "evidence_event_id": null,
+            "evidence_event_ids": [],
+            "observation": null,
+            "assessment": null
+          },
+          "next_action": {
+            "kind": "prepare_repair",
+            "label": "准备核验方案",
+            "incident_id": "incident_3e103cc645da44758026d993f4a05e06",
+            "plan_id": null,
+            "grants_permission": false
+          },
+          "evidence_ids": [
+            "pr238:8d849cbcbf4ad975398037956177d1ff78d2210f7b2fb09463ac546b4d8ed717:0"
+          ],
+          "resolution_event_id": null,
+          "missing_evidence_count": 0,
+          "updated_at": 1794479881.0127656
+        },
+        {
+          "id": "incident_ea584ff4f621464cb154484d4a8f3cae",
+          "version": 1,
+          "task_id": "2carsai-pr238:saved-cluster=false",
+          "status": "open",
+          "title": "原任务步骤未完成",
+          "agents": [
+            "analysis-role:implementation",
+            "analysis-role:review"
+          ],
+          "original_task_id": "2carsai-pr238:saved-cluster=false",
+          "task_link_reason": "",
+          "observation": {
+            "event_id": "pr238:07cf7275f5bdd51463e3a0dcf340ad0901efe966e94dc0f4424748d5999120f1:0",
+            "result": "failed",
+            "narrative": "Original regression fails: contract confirmed but its memo is missing."
+          },
+          "assessment": {
+            "category": "task_failure",
+            "reason": "评估未完成，证据不足；请按宿主现有规则处理。",
+            "source": "model",
+            "goal_status": "unknown"
+          },
+          "handling": {
+            "state": "awaiting_result",
+            "plan_id": "repair_30298f751f584360bc91967dc064f55b",
+            "plan_ids": [
+              "repair_30298f751f584360bc91967dc064f55b"
+            ],
+            "action": "restricted_retest",
+            "last_outcome": null,
+            "retry_after": null,
+            "cooldown_active": false,
+            "evidence_event_id": null,
+            "evidence_event_ids": [],
+            "observation": null,
+            "assessment": null
+          },
+          "next_action": {
+            "kind": "inspect_host_result",
+            "label": "查询原执行结果",
+            "incident_id": "incident_ea584ff4f621464cb154484d4a8f3cae",
+            "plan_id": "repair_30298f751f584360bc91967dc064f55b",
+            "grants_permission": false
+          },
+          "evidence_ids": [
+            "pr238:07cf7275f5bdd51463e3a0dcf340ad0901efe966e94dc0f4424748d5999120f1:0"
+          ],
+          "resolution_event_id": null,
+          "missing_evidence_count": 0,
+          "updated_at": 1794479869.6380274
+        }
+      ]
+    },
+    {
+      "task_id": "2carsai-pr238:saved-cluster=true",
+      "recovery_status": "needs_attention",
+      "open_incident_count": 2,
+      "resolved_incident_count": 0,
+      "observed_event_count": 2,
+      "active_plan_count": 1,
+      "missing_evidence_count": 0,
+      "primary_incident_id": "incident_1842ac7712f74167a964de9267aaca90",
+      "primary_action": {
+        "kind": "prepare_repair",
+        "label": "准备核验方案",
+        "incident_id": "incident_1842ac7712f74167a964de9267aaca90",
+        "plan_id": null,
+        "grants_permission": false
+      },
+      "summary": "评估依据不足，等待核验",
+      "updated_at": 1794479881.0285268,
+      "incidents": [
+        {
+          "id": "incident_1842ac7712f74167a964de9267aaca90",
+          "version": 1,
+          "task_id": "2carsai-pr238:saved-cluster=true",
+          "status": "open",
+          "title": "评估依据不足，等待核验",
+          "agents": [
+            "analysis-role:implementation",
+            "analysis-role:review"
+          ],
+          "original_task_id": "2carsai-pr238:saved-cluster=true",
+          "task_link_reason": "",
+          "observation": {
+            "event_id": "pr238:8d849cbcbf4ad975398037956177d1ff78d2210f7b2fb09463ac546b4d8ed717:1",
+            "result": "success",
+            "narrative": "The same original HTTP/PostgreSQL regression passes on the repair commit."
+          },
+          "assessment": {
+            "category": "evidence_needed",
+            "reason": "评估未完成，证据不足；请按宿主现有规则处理。",
+            "source": "model",
+            "goal_status": "unknown"
+          },
+          "handling": {
+            "state": "needs_plan",
+            "plan_id": null,
+            "plan_ids": [],
+            "action": "verify_handoff",
+            "last_outcome": null,
+            "retry_after": null,
+            "cooldown_active": false,
+            "evidence_event_id": null,
+            "evidence_event_ids": [],
+            "observation": null,
+            "assessment": null
+          },
+          "next_action": {
+            "kind": "prepare_repair",
+            "label": "准备核验方案",
+            "incident_id": "incident_1842ac7712f74167a964de9267aaca90",
+            "plan_id": null,
+            "grants_permission": false
+          },
+          "evidence_ids": [
+            "pr238:8d849cbcbf4ad975398037956177d1ff78d2210f7b2fb09463ac546b4d8ed717:1"
+          ],
+          "resolution_event_id": null,
+          "missing_evidence_count": 0,
+          "updated_at": 1794479881.0285268
+        },
+        {
+          "id": "incident_cf30e6768d1e449e9652b4c99efefa4b",
+          "version": 1,
+          "task_id": "2carsai-pr238:saved-cluster=true",
+          "status": "open",
+          "title": "原任务步骤未完成",
+          "agents": [
+            "analysis-role:implementation",
+            "analysis-role:review"
+          ],
+          "original_task_id": "2carsai-pr238:saved-cluster=true",
+          "task_link_reason": "",
+          "observation": {
+            "event_id": "pr238:07cf7275f5bdd51463e3a0dcf340ad0901efe966e94dc0f4424748d5999120f1:1",
+            "result": "failed",
+            "narrative": "Original regression fails: contract confirmed but its memo is missing."
+          },
+          "assessment": {
+            "category": "task_failure",
+            "reason": "评估未完成，证据不足；请按宿主现有规则处理。",
+            "source": "model",
+            "goal_status": "unknown"
+          },
+          "handling": {
+            "state": "awaiting_result",
+            "plan_id": "repair_7f6e4da6ff974b80b10b720e0dc699f8",
+            "plan_ids": [
+              "repair_7f6e4da6ff974b80b10b720e0dc699f8"
+            ],
+            "action": "restricted_retest",
+            "last_outcome": null,
+            "retry_after": null,
+            "cooldown_active": false,
+            "evidence_event_id": null,
+            "evidence_event_ids": [],
+            "observation": null,
+            "assessment": null
+          },
+          "next_action": {
+            "kind": "inspect_host_result",
+            "label": "查询原执行结果",
+            "incident_id": "incident_cf30e6768d1e449e9652b4c99efefa4b",
+            "plan_id": "repair_7f6e4da6ff974b80b10b720e0dc699f8",
+            "grants_permission": false
+          },
+          "evidence_ids": [
+            "pr238:07cf7275f5bdd51463e3a0dcf340ad0901efe966e94dc0f4424748d5999120f1:1"
+          ],
+          "resolution_event_id": null,
+          "missing_evidence_count": 0,
+          "updated_at": 1794479869.6495125
+        }
+      ]
+    }
+  ],
+  "plans": [
+    {
+      "action": "restricted_retest",
+      "agents": [
+        "analysis-role:implementation",
+        "analysis-role:review"
+      ],
+      "cancelled_at": null,
+      "completed_at": null,
+      "created_at": 1794479869.632592,
+      "description": "限定一个样本复测原任务的失败步骤",
+      "evidence_event_id": null,
+      "grants_permission": false,
+      "id": "repair_30298f751f584360bc91967dc064f55b",
+      "incident_id": "incident_ea584ff4f621464cb154484d4a8f3cae",
+      "incident_version": 1,
+      "max_attempts": 1,
+      "outcome": null,
+      "requires_host_authorization": true,
+      "scope": "仅使用宿主批准的单个样本复测，不扩大原任务权限或预算",
+      "start_sequence": 2,
+      "started_at": 1794479869.6380274,
+      "state": "started",
+      "success_criteria": "宿主核验该样本满足原失败步骤的验收要求",
+      "task_id": "2carsai-pr238:saved-cluster=false"
+    },
+    {
+      "action": "restricted_retest",
+      "agents": [
+        "analysis-role:implementation",
+        "analysis-role:review"
+      ],
+      "cancelled_at": null,
+      "completed_at": null,
+      "created_at": 1794479869.6443732,
+      "description": "限定一个样本复测原任务的失败步骤",
+      "evidence_event_id": null,
+      "grants_permission": false,
+      "id": "repair_7f6e4da6ff974b80b10b720e0dc699f8",
+      "incident_id": "incident_cf30e6768d1e449e9652b4c99efefa4b",
+      "incident_version": 1,
+      "max_attempts": 1,
+      "outcome": null,
+      "requires_host_authorization": true,
+      "scope": "仅使用宿主批准的单个样本复测，不扩大原任务权限或预算",
+      "start_sequence": 2,
+      "started_at": 1794479869.6495125,
+      "state": "started",
+      "success_criteria": "宿主核验该样本满足原失败步骤的验收要求",
+      "task_id": "2carsai-pr238:saved-cluster=true"
+    }
+  ],
+  "before": {
+    "source_revision": "78f04e2352f6124daa0b83924bbe989d2e42d7ef",
+    "started_at": "2026-11-12T10:34:49.754124+00:00",
+    "finished_at": "2026-11-12T10:35:01.302856+00:00",
+    "exit_code": 1,
+    "test_file_sha256": "123a26563980ed1ebe8a58d0dd905067f351885475d8d14a4bbecec6ce38b9f3",
+    "junit_sha256": "07cf7275f5bdd51463e3a0dcf340ad0901efe966e94dc0f4424748d5999120f1",
+    "cases": [
+      {
+        "name": "test_resumed_dealer_task_keeps_original_contact_order_and_memos[False]",
+        "status": "failed",
+        "failure_message": "AssertionError: assert [] == ['订单已确认']\n  \n  Right contains one more item: '订单已确认'\n  Use -v to get more diff"
+      },
+      {
+        "name": "test_resumed_dealer_task_keeps_original_contact_order_and_memos[True]",
+        "status": "failed",
+        "failure_message": "AssertionError: assert [] == ['订单已确认']\n  \n  Right contains one more item: '订单已确认'\n  Use -v to get more diff"
+      }
+    ]
+  },
+  "fixed": {
+    "source_revision": "91b814fbed164c5781d7cbd58e8d7e3296e13f00",
+    "started_at": "2026-11-12T10:37:49.702221+00:00",
+    "finished_at": "2026-11-12T10:38:01.001912+00:00",
+    "exit_code": 0,
+    "test_file_sha256": "123a26563980ed1ebe8a58d0dd905067f351885475d8d14a4bbecec6ce38b9f3",
+    "junit_sha256": "8d849cbcbf4ad975398037956177d1ff78d2210f7b2fb09463ac546b4d8ed717",
+    "cases": [
+      {
+        "name": "test_resumed_dealer_task_keeps_original_contact_order_and_memos[False]",
+        "status": "passed"
+      },
+      {
+        "name": "test_resumed_dealer_task_keeps_original_contact_order_and_memos[True]",
+        "status": "passed"
+      }
+    ]
+  }
+}

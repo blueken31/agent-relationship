@@ -1,0 +1,8 @@
+{
+  "check": "New Python process reopened the actual SQLite checkpoint after the capture process exited normally",
+  "matches_captured_after_views": true,
+  "task_count": 2,
+  "open_incident_count": 4,
+  "abrupt_crash_test": false,
+  "provider_calls": 0
+}
