@@ -1,14 +1,22 @@
-# Agent Relationship 0.5.0
+# Agent Relationship 0.6.0
 
 [English](#english) · [中文](#中文)
 
 ## English
 
-A lightweight Python SDK for **task-linked collaboration diagnostics and verified recovery bookkeeping**. It records interactions, preserves the evidence behind an assessment, keeps unresolved incidents visible, and helps a host application prepare a bounded recovery action.
+A **collaboration diagnosis and recovery-validation layer for multi-agent systems**, delivered as an embeddable Python SDK. It records interactions, preserves the evidence behind an assessment, keeps unresolved incidents visible, and helps a host application prepare a bounded recovery action.
 
 The SDK runs in **observation mode**. Its diagnoses and recovery plans do not grant permissions or execute tasks. Your host application remains responsible for authorization, budgets, actual execution and validation of evidence.
 
-Python 3.10+, zero required runtime dependencies. HTTP adapters use the standard library.
+Python 3.10+, zero required runtime dependencies. HTTP adapters use the standard library. “Lightweight” describes the packaging, not a measured cost or scalability claim.
+
+### Relationship to an existing harness
+
+Keep the host's orchestration, tools, approvals, tracing and recovery mechanisms. This SDK adds reusable task-linked incident and verification semantics; whether those improve a well-configured native harness must be measured. Native prompts and hooks can implement overlapping behavior.
+
+Version 0.6.0 adds an [Agents API event adapter](docs/AGENTS_API_ADAPTER.md) and a [paired evaluation protocol](docs/EVALUATION.md). The adapter targets the documented OpenAI Agents API event surface, not every Codex interface. Its fixtures are synthetic and live integration remains unverified. The evaluation gives the native arm the same goals, evidence, policy and budget as the SDK arm. Offline scorer checks do not establish semantic quality or incremental benefit.
+
+The near-term priority is evidence of better collaboration decisions: legitimate disagreement, shared dependency failures, goal violations, unresolved harms and valid recovery. Role, direction and dependency context are retained for investigation; the current bilateral scoring engine does not infer a cluster's root cause.
 
 ### Install and try the complete offline example
 
@@ -167,13 +175,21 @@ Use a local file on one machine. Writes are serialized, including model evaluati
 
 Risk-change callbacks run after a successful commit and remain best-effort. A crash between commit and callback delivery can lose a notification; reopening or retrying the same event does not automatically deliver it again. There is no durable notification outbox yet. The committed incident and evidence remain queryable, so hosts should inspect pending incidents rather than rely solely on callback delivery. Keep untrusted agents from writing host verification fields or authorization decisions.
 
-This release ships the SDK, a local host continuation example and a read-only HTML preview. A production web client, authentication and framework-specific integration remain future work. Relationship scores remain bilateral; task cards gather incidents across the task's Agent pairs. Full direction-, role-, version- and workspace-specific policy is still pending. Live model quality, recovery success rates, token usage and cost have not been benchmarked. See [the roadmap](docs/ROADMAP.md).
+This release ships the SDK, an initial observation adapter for Agents API events, an offline evaluation harness, a local host continuation example and a read-only HTML preview. A production web client, authentication and live host acceptance remain future work. Relationship scores remain bilateral; task cards gather incidents across the task's Agent pairs. Full direction-, role-, version- and workspace-specific policy is still pending. Live model quality, recovery success rates, token usage and cost have not been benchmarked. See [the roadmap](docs/ROADMAP.md).
 
 ## 中文
 
-这是一个轻量 Python SDK，用于**发现任务协作异常、保留判断依据、准备受限恢复方案，并记录验证结果**。使用者能沿着原任务查看发生了什么、推荐处理什么、问题是否真正解除。
+这是一个**面向多 Agent 系统的协作诊断与恢复验证层，以可嵌入的 Python SDK 交付**。它发现任务协作异常、保留判断依据、准备受限恢复方案，并记录验证结果。使用者能沿着原任务查看发生了什么、推荐处理什么、问题是否真正解除。
 
-SDK 默认只做观察和诊断。它不执行任务，也不授予权限；宿主系统负责授权、预算、实际操作和证据核验。Python 3.10 及以上，运行时零必选依赖。
+SDK 默认只做观察和诊断。它不执行任务，也不授予权限；宿主系统负责授权、预算、实际操作和证据核验。Python 3.10 及以上，运行时零必选依赖。“轻量”描述接入与依赖规模，不代表已经证明低成本或集群扩展能力。
+
+### 与现有 harness 的关系
+
+继续使用宿主已有的编排、工具、审批、追踪与恢复能力。SDK 提供可复用的任务异常与验证规则；原生提示词和 hooks 也能实现部分相同功能，增益需要通过对照评测证明。
+
+0.6.0 提供 [Agents API 事件适配器](docs/AGENTS_API_ADAPTER.md)和[双组评测协议](docs/EVALUATION.md)。适配器面向 OpenAI Agents API 已公开的事件接口，不代表覆盖所有 Codex 接口；当前验证使用依据官方文档构造的合成数据，真实接入待验收。评测让原生组获得同样的目标、证据、规则与总预算，离线校验通过不代表已经优于原生 harness。
+
+近期优先验证合理否决、共同依赖故障、目标违规、未解决损害与有效恢复。角色、方向及依赖关系用于保留调查线索；当前双边评分还不能自动判定整个集群的故障根因。
 
 ### 从完整离线示例开始
 
@@ -262,7 +278,7 @@ SDK 状态检查与宿主提交之间没有跨库原子保证，真实宿主仍�
 
 ### 当前边界
 
-本批提供 SDK、本地宿主接续示例和只读 HTML 卡片预览；生产网页客户端、认证和框架专用连接器仍待接入。默认内存模式在重启后仍会丢失状态；配置 `storage_path` 才会保存。SQLite 保存当前完整快照，尚无历史快照回放、导出归档或有界保留机制。`max_history` 只限制历史展示和评分窗口，完整证据、去重记录、内存和快照大小仍会随事件增长。加载时会依据已存评估核对评分计算，不会调用模型；读取成本也会随保留的证据增长。
+本批提供 SDK、Agents API 观察适配器、离线评测框架、本地宿主接续示例和只读 HTML 卡片预览；生产网页客户端、认证和真实宿主联调仍待接入。默认内存模式在重启后仍会丢失状态；配置 `storage_path` 才会保存。SQLite 保存当前完整快照，尚无历史快照回放、导出归档或有界保留机制。`max_history` 只限制历史展示和评分窗口，完整证据、去重记录、内存和快照大小仍会随事件增长。加载时会依据已存评估核对评分计算，不会调用模型；读取成本也会随保留的证据增长。
 
 当前面向单机本地文件。写操作串行化，模型评估期间也会占用写事务，因此慢模型可能阻塞其他写入；不面向高吞吐、网络文件系统或分布式部署。存储未自动加密，宿主负责保护数据库和备份。API 凭据、后端对象和回调函数不写入快照，但传入的事件上下文会保留。
 
