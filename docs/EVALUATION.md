@@ -6,6 +6,11 @@ hooks, memory and review rules. A green test suite cannot answer that question.
 This checkout now supplies authored cases, blind input export, a callback runner
 and strict paired scoring. No live diagnostic-quality result has been measured.
 
+For a real host run, use the [prepared session workflow](EVALUATION_RUNS.md) to
+review exact configuration and limits, retain completed receipts across restarts,
+and stop when a previous outcome or its usage is unknown. The existing scorer
+remains usable for externally collected artifacts with explicitly unknown usage.
+
 ## Scope and evidence level
 
 `evaluation/cases.json` contains **12 synthetic authored scenarios, 31 observations
