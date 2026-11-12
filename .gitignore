@@ -221,3 +221,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project evidence belongs outside the public repository. Public test inputs
+# must be authored synthetic fixtures, never copied captures or checkpoints.
+/evaluation/captures/
+/evaluation/results/
+/private-evidence/
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.patch

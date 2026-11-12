@@ -29,7 +29,8 @@ class RelationshipEngine:
     - 关系修复路径
     """
 
-    def __init__(self, llm: LLMBackend, max_history: int = 100, temperature: float = 0.3):
+    def __init__(self, llm: LLMBackend, max_history: int = 100, temperature: float = 0.3,
+                 diagnosis_policy: str = "legacy"):
         if isinstance(max_history, bool) or not isinstance(max_history, int) or max_history < 1:
             raise ValueError("max_history 必须为正整数")
         if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not math.isfinite(temperature) or not 0 <= temperature <= 2:
@@ -37,7 +38,7 @@ class RelationshipEngine:
         self.llm = llm
         self.temperature = temperature
         self.lock = threading.RLock()
-        self.recovery = RecoveryLedger()
+        self.recovery = RecoveryLedger(diagnosis_policy=diagnosis_policy)
         self._task_profiles = {}
         self._events = {}
         self.event_records = {}
@@ -105,6 +106,9 @@ class RelationshipEngine:
         if not isinstance(action, str) or not action.strip():
             raise ValueError("action 必须为非空字符串")
         fingerprint = json.dumps([initiator, target, data], sort_keys=True, ensure_ascii=False)
+        if self.recovery.diagnosis_policy == "task_evidence_v1":
+            from .evidence_policy import validate_context
+            validate_context(data)
         with self.lock:
             if event_id in self._events:
                 previous_fingerprint, previous = self._events[event_id]

@@ -27,6 +27,8 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install package
         run: python -m pip install . --no-deps
+      - name: Check public distribution inputs
+        run: python scripts/check_public_distribution.py
       - name: Run deterministic tests
         env:
           PYTHONDONTWRITEBYTECODE: '1'
@@ -37,6 +39,8 @@ jobs:
         run: python examples/durable_recovery.py
       - name: Verify host task continuity
         run: python examples/host_task_recovery.py
+      - name: Verify opt-in task evidence policy with synthetic data
+        run: python examples/task_evidence.py
       - name: Verify Agents API synthetic replay
         run: python examples/agents_api_replay.py
       - name: Validate collaboration evaluation and SDK wiring

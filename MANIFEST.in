@@ -4,3 +4,7 @@ recursive-include agent_relationship *.py
 recursive-include examples *.py
 recursive-include docs *.md
 global-exclude *.py[cod]
+prune evaluation/captures
+prune evaluation/results
+prune private-evidence
+global-exclude *.sqlite *.sqlite3 *.sqlite3-* *.db *.db-* *.patch *.log *.xml

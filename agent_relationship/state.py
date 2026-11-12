@@ -14,9 +14,12 @@ import math
 from .models import InteractionRecord, RelationProfile, RelationType
 from .recovery import RecoveryLedger
 from .types import TrackResult
+from .evidence_policy import (LEGACY, TASK_EVIDENCE, validate_context, validate_contract,
+                              bind_contract, host_result_matches, adverse_since_start)
 
 SCHEMA_VERSION = 1
 SCORING_VERSION = "1"
+TASK_EVIDENCE_SCHEMA_VERSION = 2
 
 
 class StateError(ValueError):
@@ -89,8 +92,16 @@ def _pair(value):
 
 def _config(tracker):
     engine = tracker._engine
-    return {"max_history": engine.max_history, "moloch_threshold": engine.moloch_threshold,
-            "moloch_min_zone_size": engine.moloch_min_zone_size}
+    config = {"max_history": engine.max_history, "moloch_threshold": engine.moloch_threshold,
+              "moloch_min_zone_size": engine.moloch_min_zone_size}
+    if engine.recovery.diagnosis_policy != LEGACY:
+        config["diagnosis_policy"] = engine.recovery.diagnosis_policy
+    return config
+
+
+def _schema_version(tracker):
+    return (TASK_EVIDENCE_SCHEMA_VERSION if tracker._engine.recovery.diagnosis_policy == TASK_EVIDENCE
+            else SCHEMA_VERSION)
 
 
 def _json_types(value):
@@ -130,7 +141,7 @@ def export_state(tracker):
     engine = tracker._engine
     recovery = engine.recovery
     return _json_copy({
-        "schema_version": SCHEMA_VERSION, "scoring_version": SCORING_VERSION,
+        "schema_version": _schema_version(tracker), "scoring_version": SCORING_VERSION,
         "config": _config(tracker),
         "profiles": [{"key": list(key), "value": _profile_data(value)} for key, value in engine.profiles.items()],
         "task_profiles": [{"key": list(key), "value": _profile_data(value)} for key, value in engine._task_profiles.items()],
@@ -169,6 +180,9 @@ def _records(data):
         _text(value["assessment_source"])
         _text(value["assessment_reason"])
         _text(value["assessment_error"], optional=True)
+        if value["assessment_source"] == "not_requested":
+            _check(value["assessment_status"] == "unknown" and value["goal_status"] == "unknown")
+            _check(value["impact_a"] is None and value["impact_b"] is None)
         output[key] = InteractionRecord(**value)
     return output
 
@@ -301,7 +315,7 @@ def _result(value, record, incidents, track=False):
     return value
 
 
-def _recovery(data, records):
+def _recovery(data, records, diagnosis_policy=LEGACY):
     _object(data, _RECOVERY_KEYS)
     for field in ("incidents", "plans", "events", "event_incidents", "event_order"):
         _object(data[field])
@@ -314,6 +328,8 @@ def _recovery(data, records):
     _check(set(data["event_order"].values()) == set(range(1, len(ids) + 1)))
     for event_id, record in records.items():
         _check(data["events"][event_id] == asdict(record))
+        if diagnosis_policy == TASK_EVIDENCE:
+            validate_context(record.context)
     incidents, plans = data["incidents"], data["plans"]
     for key, issue in incidents.items():
         _text(key); _object(issue, _INCIDENT_FIELDS)
@@ -352,7 +368,8 @@ def _recovery(data, records):
         _check(issue_id is None or (issue_id in incidents and event_id in incidents[issue_id]["evidence_ids"]))
     active = set()
     for key, plan in plans.items():
-        _text(key); _object(plan, _PLAN_FIELDS)
+        extra_fields = {"verification_contract", "proposal_sequence", "completion_sequence"}
+        _text(key); _object(plan, _PLAN_FIELDS | (extra_fields if diagnosis_policy == TASK_EVIDENCE else set()))
         _check(plan["id"] == key and plan["incident_id"] in incidents)
         issue = incidents[plan["incident_id"]]
         _check(plan["agents"] == issue["agents"] and plan["task_id"] == issue["task_id"])
@@ -375,6 +392,24 @@ def _recovery(data, records):
             _check(plan["started_at"] >= plan["created_at"] and plan["state"] != "proposed")
             _integer(plan["incident_version"], 1); _integer(plan["start_sequence"])
             _check(plan["incident_version"] <= issue["version"] and plan["start_sequence"] <= data["sequence"])
+        if diagnosis_policy == TASK_EVIDENCE:
+            _integer(plan["proposal_sequence"], 1)
+            _check(plan["proposal_sequence"] <= data["sequence"])
+            if plan["started_at"] is not None:
+                _check(plan["start_sequence"] >= plan["proposal_sequence"])
+            if plan.get("verification_contract") is not None:
+                contract = validate_contract(plan["verification_contract"])
+                _check(contract == plan["verification_contract"])
+                # New requirements can legitimately make an old plan stale.
+                # Validate what was known when it was proposed/started, so
+                # reads and cancellation still work after a restart.
+                for sequence in (plan["proposal_sequence"], plan["start_sequence"]):
+                    if sequence is None:
+                        continue
+                    evidence_ids = [event_id for event_id in issue["evidence_ids"]
+                                    if data["event_order"][event_id] <= sequence]
+                    _check(bool(evidence_ids))
+                    bind_contract(contract, {**issue, "evidence_ids": evidence_ids}, data["events"], plan["action"])
         _check((plan["cancelled_at"] is not None) == (plan["state"] == "cancelled"))
         _check((plan["completed_at"] is not None) == (plan["state"] == "completed"))
         if plan["state"] == "completed":
@@ -385,13 +420,24 @@ def _recovery(data, records):
             _check(record.task_id == plan["task_id"] and list(sorted((record.initiator, record.target))) == plan["agents"])
             _check(record.interaction_type == plan["action"] and record.context.get("repair_plan_id") == key)
             _check(record.timestamp >= plan["started_at"])
+            if diagnosis_policy == TASK_EVIDENCE:
+                _integer(plan["completion_sequence"], 1)
+                _check(data["event_order"][event_id] <= plan["completion_sequence"] <= data["sequence"])
             if plan["outcome"] == "resolved":
                 _check(issue["status"] == "resolved" and issue["resolution_event_id"] == event_id)
                 _check(record.context.get("verification_passed") is True and record.context.get("result") == "success")
-                _check(record.is_assessed and record.impact_a >= 0 and record.impact_b >= 0 and record.goal_status != "violated")
-                _check(issue["category"] != "goal_violation" or record.goal_status == "met")
+                if plan.get("verification_contract") is not None:
+                    _check(issue["version"] == plan["incident_version"])
+                    bind_contract(plan["verification_contract"], issue, data["events"], plan["action"])
+                    _check(host_result_matches(plan, record.context, record.timestamp, record.goal_status))
+                    _check(not adverse_since_start(plan, incidents, data["event_order"], plan["completion_sequence"]))
+                else:
+                    _check(record.is_assessed and record.impact_a >= 0 and record.impact_b >= 0 and record.goal_status != "violated")
+                    _check(issue["category"] != "goal_violation" or record.goal_status == "met")
         else:
             _check(plan["outcome"] is None and plan["evidence_event_id"] is None)
+            if diagnosis_policy == TASK_EVIDENCE:
+                _check(plan["completion_sequence"] is None)
     for issue in incidents.values():
         if issue["status"] == "resolved":
             _check(any(plan["incident_id"] == issue["id"] and plan["outcome"] == "resolved" for plan in plans.values()))
@@ -426,16 +472,16 @@ def restore_state(tracker, payload):
     try:
         state = _json_copy(payload)
         _object(state, _KEYS)
-        _check(type(state["schema_version"]) is int and state["schema_version"] == SCHEMA_VERSION,
+        _check(type(state["schema_version"]) is int and state["schema_version"] == _schema_version(tracker),
                "Unsupported checkpoint schema version")
         _check(state["scoring_version"] == SCORING_VERSION, "Unsupported checkpoint scoring version")
-        _object(state["config"], {"max_history", "moloch_threshold", "moloch_min_zone_size"})
+        _object(state["config"], set(_config(tracker)))
         _integer(state["config"]["max_history"], 1)
         _number(state["config"]["moloch_threshold"], maximum=1)
         _integer(state["config"]["moloch_min_zone_size"], 2)
         _check(state["config"] == _config(tracker), "Checkpoint configuration does not match this tracker")
         records = _records(state["event_records"])
-        recovery = _recovery(state["recovery"], records)
+        recovery = _recovery(state["recovery"], records, tracker._engine.recovery.diagnosis_policy)
         grouped, task_grouped = {}, {}
         for event_id in sorted(records, key=recovery["event_order"].get):
             record = records[event_id]

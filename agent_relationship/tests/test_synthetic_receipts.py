@@ -2,14 +2,12 @@
 
 from copy import deepcopy
 from datetime import datetime, timezone
-import hashlib
-import json
 from pathlib import Path
 import tempfile
 import unittest
 
 from agent_relationship import RelationshipTracker
-from evaluation.twocarsai_observation import (
+from evaluation.synthetic_receipts import (
     BEFORE, FIXED, NAMES, UnavailableAssessor, observe, validate_receipt,
 )
 
@@ -22,12 +20,12 @@ def receipt(revision, status):
         "test_file_sha256": "a" * 64,
         "junit_sha256": ("b" if status == "failed" else "c") * 64,
         "cases": [{"name": name, "status": status, **(
-            {"failure_message": "AssertionError: assert [] == ['订单已确认']"}
+            {"failure_message": "AssertionError: reference missing"}
             if status == "failed" else {})} for name in NAMES],
     }
 
 
-class ProjectObservationTest(unittest.TestCase):
+class SyntheticReceiptTest(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -102,27 +100,9 @@ class ProjectObservationTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         with RelationshipTracker(llm=UnavailableAssessor(), storage_path=self.path) as tracker:
             for suffix in ("false", "true"):
-                view = tracker.task_view("2carsai-pr238:saved-cluster=" + suffix)
+                view = tracker.task_view("fixture:document-mode=" + suffix)
                 self.assertEqual(view["active_plan_count"], 1)
                 self.assertEqual(view["open_incident_count"], 1)
         with self.assertRaises(FileExistsError):
             observe(receipt(BEFORE, "failed"), fail, self.path)
         self.assertEqual(len(calls), 1)
-
-    def test_retained_capture_consistency_is_not_a_quality_score(self):
-        root = Path(__file__).resolve().parents[2] / "evaluation/captures/2carsai-pr238"
-        manifest = json.loads((root / "manifest.json").read_text())
-        for filename, digest in manifest["artifacts_sha256"].items():
-            self.assertEqual(hashlib.sha256((root / filename).read_bytes()).hexdigest(), digest)
-        before = json.loads((root / "before.json").read_text())
-        fixed = json.loads((root / "fixed.json").read_text())
-        validate_receipt(before, BEFORE, "failed")
-        validate_receipt(fixed, FIXED, "passed")
-        self.assertEqual(before["test_file_sha256"], fixed["test_file_sha256"])
-        report = json.loads((root / "observation.json").read_text())
-        self.assertFalse(report["native_vs_sdk_experiment"])
-        self.assertFalse(report["runtime_multiagent_trace_captured"])
-        self.assertEqual(report["before"], before)
-        self.assertEqual(report["fixed"], fixed)
-        start = datetime.fromisoformat(fixed["started_at"]).timestamp()
-        self.assertGreater(start, max(p["started_at"] for p in report["plans"]))

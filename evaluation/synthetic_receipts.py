@@ -1,8 +1,7 @@
-"""Bounded PR #238 observation probe; no inference, executor or quality score.
+"""Synthetic receipt workflow; no project evidence, inference or executor.
 
-The caller runs the original 2CarsAI tests and supplies redacted receipts. The
-two identities below are analysis roles, not captured runtime agent identities.
-An unavailable assessor stays unknown, including after a passing host test.
+All revisions, case names and observations in this module are authored fixtures.
+An unavailable assessor stays unknown, including after a simulated passing check.
 """
 
 from copy import deepcopy
@@ -16,9 +15,9 @@ from agent_relationship import RelationshipTracker
 from agent_relationship.llm.base import LLMBackend
 
 
-BEFORE = "78f04e2352f6124daa0b83924bbe989d2e42d7ef"
-FIXED = "91b814fbed164c5781d7cbd58e8d7e3296e13f00"
-TEST = "test_resumed_dealer_task_keeps_original_contact_order_and_memos"
+BEFORE = "fixture:revision-before"
+FIXED = "fixture:revision-after"
+TEST = "test_document_reference_continuity"
 PAIR = ("analysis-role:implementation", "analysis-role:review")
 NAMES = [TEST + "[False]", TEST + "[True]"]
 
@@ -43,7 +42,7 @@ def validate_receipt(receipt, revision, status):
 
     Digests and declared source revisions support auditing; they do not attest
     that a caller executed a command. This specific probe accepts exactly the
-    two original regression cases, with the same failure observed in #238.
+    two synthetic regression cases with an explicitly authored failure.
     """
     if receipt.get("source_revision") != revision:
         raise ValueError("unexpected source revision")
@@ -63,31 +62,31 @@ def validate_receipt(receipt, revision, status):
         raise ValueError("unexpected process outcome")
     cases = receipt.get("cases", [])
     if sorted(case["name"] for case in cases) != sorted(NAMES):
-        raise ValueError("expected exactly the two original cases")
+        raise ValueError("expected exactly the two fixture cases")
     if any(case["status"] != status for case in cases):
         raise ValueError("skipped, errored or unexpected regression outcome")
     if status == "failed" and any(
         case.get("failure_message", "").split("\n", 1)[0]
-        != "AssertionError: assert [] == ['订单已确认']" for case in cases
+        != "AssertionError: reference missing" for case in cases
     ):
-        raise ValueError("failure does not reproduce the reviewed defect")
+        raise ValueError("failure does not match the declared fixture")
 
 
 def _context(receipt, index, result):
     name = NAMES[index]
     return {
-        "event_id": "pr238:" + receipt["junit_sha256"] + ":" + str(index),
-        "task_id": "2carsai-pr238:saved-cluster=" + str(bool(index)).lower(),
+        "event_id": "fixture:" + receipt["junit_sha256"] + ":" + str(index),
+        "task_id": "fixture:document-mode=" + str(bool(index)).lower(),
         "action": "regression_check",
-        "goal": "Retain the original contact and buyer receipts after saving a purchase task",
-        "expected_result": "Original confirmation/refund receipts remain visible; unrelated contacts and unauthorized readers are excluded",
+        "goal": "Preserve document references across a saved handoff",
+        "expected_result": "Expected references remain visible only to authorized readers",
         "result": result,
-        "narrative": ("Original regression fails: contract confirmed but its memo is missing."
+        "narrative": ("Synthetic failure: the expected document reference is missing."
                       if result == "failed" else
-                      "The same original HTTP/PostgreSQL regression passes on the repair commit."),
+                      "The synthetic host receipt reports a passing reference check."),
         "evidence_refs": ["sha256:" + receipt["junit_sha256"] + "#" + name],
         "provenance": {
-            "source": "2carsai_original_pytest", "source_revision": receipt["source_revision"],
+            "source": "synthetic_receipt_fixture", "source_revision": receipt["source_revision"],
             "receipt_sha256": _digest(receipt), "host_started_at": receipt["started_at"],
             "host_finished_at": receipt["finished_at"],
             "identities": "analysis_roles_not_captured_agent_ids",
@@ -99,9 +98,9 @@ def observe(before, verify, storage_path):
     """Record failures, reopen SQLite, then request one fresh bounded host check.
 
     ``verify`` is a caller-owned callback returning the repaired test receipt.
-    The SDK never executes the tests, grants permission, or supplies a verdict.
-    Both parameter variants share the one host invocation. Each SDK plan covers
-    only its original sample. Existing state is refused to avoid accidental reruns.
+    The SDK never executes tests or grants permission; authorization in this fixture is simulated.
+    Both parameter variants share one supplied fixture callback. Each SDK plan covers
+    only its declared sample. Existing state is refused to avoid accidental reruns.
     """
     validate_receipt(before, BEFORE, "failed")
     path = Path(storage_path)
@@ -163,7 +162,7 @@ def observe(before, verify, storage_path):
                 raise RuntimeError("unknown assessment unexpectedly resolved the SDK incident")
             after_views.append(tracker.task_view(plan["task_id"]))
     return {
-        "mode": "project_receipt_observation",
+        "mode": "synthetic_receipt_walkthrough",
         "receipts_are_operator_supplied": True,
         "native_vs_sdk_experiment": False,
         "runtime_multiagent_trace_captured": False,
