@@ -40,7 +40,11 @@ The intended experience is: find the original task → inspect one concise issue
 
 The host example's local result and receipt share one transaction. Its SDK readiness check and host commit use separate databases and are not atomic. A real host must supply its own concurrency policy and reconcile ambiguous external outcomes using the external operation's stable ID. No external executor or exactly-once external delivery is supplied.
 
-## Current batch: 0.6.0 collaboration evaluation and harness boundary
+## Completed: 0.6.0 collaboration evaluation and harness boundary
+
+[PR #4](https://github.com/blueken31/agent-relationship/pull/4) merged at `cfb8c7c`.
+Its [main CI](https://github.com/blueken31/agent-relationship/actions/runs/43193347392)
+passed. This validates the implementation mechanisms, not a live comparison.
 
 The product remains a collaboration diagnosis and recovery-validation layer for multi-agent systems, delivered as an embeddable Python SDK. Native harnesses already provide orchestration, approvals, tracing and recovery. Reusable diagnosis and evidence rules are a candidate benefit to measure, not a claim of exclusive capabilities.
 
@@ -55,6 +59,28 @@ The product remains a collaboration diagnosis and recovery-validation layer for 
 Run the [evaluation protocol](EVALUATION.md) and [adapter walkthrough](AGENTS_API_ADAPTER.md). The evaluator scores decisions on fixed histories; it does not measure live task success, actual pauses, recovery time or real group behavior. Scorer self-checks use explicitly synthetic arithmetic inputs and are not published as model results. The first event fixtures follow documented provider fields but are not a captured live run or comprehensive schema conformance suite.
 
 The evaluator's `continue / investigate / hold` labels describe the **proposed next action** under the shared policy. `investigate` is an evidence request, not an actual execution pause. Tracker `review`, unknown evidence or a low event-count confidence must not be mechanically converted into `hold`. A task failure is a task observation, not proof that either agent caused it.
+
+## Current batch: prepare and resume the real comparison
+
+The [prepared session workflow](EVALUATION_RUNS.md) makes the existing evaluation
+usable by an actual host without losing earlier results or silently repeating an
+uncertain invocation. It is checkout tooling; runtime SDK contracts and scoring
+semantics stay at 0.6.0.
+
+| Deliverable | Acceptance |
+|---|---|
+| Reviewable plan | Exact prompt/hooks hashes, blind inputs, shared experiment, paired job count and explicit total limits; preparation makes no calls |
+| Work admission | Reserve the declared checkpoint maximum before host dispatch; stop before the next claim if the remaining budget is insufficient |
+| Durable receipts | Completed results survive restart, duplicate receipts are idempotent, changed receipts fail, partial work remains inspectable |
+| Uncertain-outcome handling | Callback errors, process exits and missing usage retain their reservation; no automatic retry or refund; reconcile from host records |
+| Complete result export | Both arms must finish before emitting scorer-compatible runs; synthetic workflow checks make no quality claims |
+
+The host must enforce limits at its provider boundary and report actual usage;
+local reservations cannot reverse or prevent unobserved remote spending. The
+remaining real-run inputs are an authorized accessible host session, redacted
+evidence/receipts, exact model/assessment configuration and an agreed cost ceiling.
+The next work should run that bounded comparison and inspect its disagreements,
+before expanding generic infrastructure.
 
 ## Next acceptance gate: one real host and a strong native baseline
 

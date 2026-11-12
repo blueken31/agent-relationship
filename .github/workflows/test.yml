@@ -44,6 +44,7 @@ jobs:
           python -m evaluation validate
           python -m evaluation selfcheck
           python examples/harness_sdk_policy.py
+          python -m examples.evaluation_session
       - name: Render read-only task preview
         run: |
           python examples/task_review_preview.py --output /tmp/task-review.html

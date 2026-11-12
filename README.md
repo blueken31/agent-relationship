@@ -18,6 +18,8 @@ Version 0.6.0 adds an [Agents API event adapter](docs/AGENTS_API_ADAPTER.md) and
 
 The near-term priority is evidence of better collaboration decisions: legitimate disagreement, shared dependency failures, goal violations, unresolved harms and valid recovery. Role, direction and dependency context are retained for investigation; the current bilateral scoring engine does not infer a cluster's root cause.
 
+The checkout also provides [prepared evaluation sessions](docs/EVALUATION_RUNS.md): review the exact inputs/configuration and budgets before host calls, keep completed receipts after interruption, and reconcile uncertain outcomes before continuing. This tooling reserves work locally; the host must enforce provider limits and supply actual usage. No live comparative result has been measured.
+
 ### Install and try the complete offline example
 
 For this source checkout:
@@ -190,6 +192,8 @@ SDK 默认只做观察和诊断。它不执行任务，也不授予权限；宿�
 0.6.0 提供 [Agents API 事件适配器](docs/AGENTS_API_ADAPTER.md)和[双组评测协议](docs/EVALUATION.md)。适配器面向 OpenAI Agents API 已公开的事件接口，不代表覆盖所有 Codex 接口；当前验证使用依据官方文档构造的合成数据，真实接入待验收。评测让原生组获得同样的目标、证据、规则与总预算，离线校验通过不代表已经优于原生 harness。
 
 近期优先验证合理否决、共同依赖故障、目标违规、未解决损害与有效恢复。角色、方向及依赖关系用于保留调查线索；当前双边评分还不能自动判定整个集群的故障根因。
+
+仓库还提供[可核对、可接续的评测批次](docs/EVALUATION_RUNS.md)：运行前查看输入、配置和预算；中断后保留已完成结果，结果不明时先核对再继续。工具按声明上限预留本地任务预算，实际模型调用限制与用量记录仍由宿主落实，真实对照结果尚待测量。
 
 ### 从完整离线示例开始
 
