@@ -1,4 +1,4 @@
-# Agent Relationship 0.3.0
+# Agent Relationship 0.4.0
 
 [English](#english) · [中文](#中文)
 
@@ -17,6 +17,7 @@ For this source checkout:
 ```bash
 python -m pip install -e .
 PYTHONPATH=. python examples/task_recovery.py
+PYTHONPATH=. python examples/durable_recovery.py
 python -m unittest discover -s agent_relationship/tests -v
 ```
 
@@ -46,7 +47,36 @@ print(tracker.history("organizer", "reviewer", task_id="report-001"))
 print(tracker.can_cooperate("organizer", "reviewer", task_id="report-001"))
 ```
 
-Use stable `event_id` values when retrying. Repeating an identical ID and payload is idempotent **within one tracker instance**; reusing it for different content raises `ValueError`. Omitting the ID creates a new event each time. `task_id` is required for a recovery proposal. For a legacy unscoped issue, `link_incident(incident_id, task_id, reason)` records an explicit host association without rewriting the original event. `event(event_id)` retrieves full retained evidence even after the rolling history window expires. Evidence references and provenance are supplied by the host and retained as context; the SDK does not fetch or independently authenticate them. Do not pass secrets or unnecessary personal data into model-bound context.
+Use stable `event_id` values when retrying. Repeating an identical ID and payload is idempotent **within one tracker instance, or across restarts and instances sharing the same SQLite file**; reusing it for different content raises `ValueError`. Omitting the ID creates a new event each time. `task_id` is required for a recovery proposal. For a legacy unscoped issue, `link_incident(incident_id, task_id, reason)` records an explicit host association without rewriting the original event. `event(event_id)` retrieves full retained evidence even after the rolling history window expires. Evidence references and provenance are supplied by the host and retained as context; the SDK does not fetch or independently authenticate them. Do not pass secrets or unnecessary personal data into model-bound context.
+
+### Keep task evidence across restarts
+
+Persistence is optional. Without `storage_path`, the SDK retains the existing in-memory behavior. To keep committed state in a local SQLite file:
+
+```python
+from agent_relationship import RelationshipTracker
+
+with RelationshipTracker(storage_path="relationship.sqlite3", storage_timeout=5.0) as tracker:
+    tracker.track("organizer", "reviewer", {
+        "event_id": "handoff-001",
+        "task_id": "report-001",
+        "action": "handoff",
+        "result": "failed",
+    })
+
+# Reopen with the same scoring configuration; no model evaluation is replayed.
+with RelationshipTracker(storage_path="relationship.sqlite3") as resumed:
+    print(resumed.incidents(task_id="report-001", status="open"))
+    print(resumed.event("handoff-001"))
+```
+
+Use one database file per logical tracker/workspace, with event IDs unique within that file. A committed checkpoint includes scores, original event evidence and assessment metadata, deduplication results, task incidents, recovery plans, cooldowns and report trends. Reopening restores these facts; it does not resume external work or invoke models. The [durable offline example](examples/durable_recovery.py) closes and reopens a tracker between starting and completing a recovery plan, then verifies the resolution after another reopen.
+
+Public reads refresh from the latest committed checkpoint. Writes acquire a SQLite writer transaction, load the current state, apply the operation and save atomically, preventing independent instances on the same machine from overwriting each other's updates. A failed transaction rolls back. `storage_timeout` controls how long an operation waits for a database lock; contention or storage failure is reported rather than silently dropping a write.
+
+Snapshot schema, scoring version and the `max_history`, `moloch_threshold` and `moloch_min_zone_size` configuration are checked on open. Unsupported versions, corrupt snapshots and configuration mismatches raise errors without resetting the database. The package exports `StorageError`, `StorageVersionError` and `StateError` so hosts can handle these failures explicitly. A different model backend can be used for new events; historical assessments keep their recorded source and model. This is checkpoint restoration, not re-evaluation or a historical replay engine.
+
+Use the context manager or call `close()` to release the connection. Durable mode supports the public `RelationshipTracker` methods; direct access through `tracker.engine` is rejected to prevent mutations that bypass persistence. A model backend cannot recursively mutate the same durable tracker during assessment; this prevents nested events from notifying before the outer transaction commits.
 
 ### Recovery lifecycle
 
@@ -67,7 +97,7 @@ See [the executable example](examples/task_recovery.py) for the full sequence.
 - A participant's loss cannot be canceled by the other's gain. Reported goal violations remain unfavorable even when both participants benefit.
 - `confidence` in tracker reports measures assessed-event quantity using `n / (n + 5)`. It is **not** a calibrated probability or proof of evidence quality. Inspect provenance and assessment source as well. An unknown latest assessment displays zero current confidence and an unknown network cell; it is excluded from the known-score average.
 - Serious unresolved incidents are stored separately from recent scores. Subsequent successes cannot close them.
-- The first high/critical observation can notify `on_risk_change`. Callback failures are reported as `notification_error="callback_failed"`, without rolling back or duplicating the event.
+- The first high/critical observation can notify `on_risk_change`. Callback failures are reported as `notification_error="callback_failed"`, without rolling back or duplicating the event. If saving that callback diagnostic also fails, the returned value is `callback_failed_status_unpersisted`; the event itself remains committed.
 - `detect_moloch()` retains its legacy name but reports connected regions of low collaboration scores, not proof of competitive escalation or malicious intent. Reading it or `summary()` does not advance the trend.
 
 ### Backend configuration
@@ -83,7 +113,7 @@ An explicit `model=` overrides the corresponding environment variable. Select a 
 
 ### Migrating from 0.2.x
 
-| Previous behavior | 0.3.0 contract |
+| Previous behavior | Current contract (introduced in 0.3.0) |
 |---|---|
 | No history could return `can=True` | Returns `can=False`, `decision="unknown"`; the host applies its existing policy |
 | `try_repair=True` could permit the original task | Returns a recovery-required recommendation; use a task-bound plan |
@@ -98,7 +128,11 @@ Branch on `decision`, not only `can`: `continue`, `review`, `unknown` and `repai
 
 ### Current boundaries
 
-State is in memory. Restarting a tracker loses scores, incidents, plans and deduplication; there is no durable storage or replay yet. `max_history` limits displayed/scoring history, not the full evidence and deduplication ledgers, whose memory use grows with recorded events. Instance-level locking is not cross-process coordination. Keep untrusted agents from writing host verification fields or authorization decisions.
+The default is still in memory; only `storage_path` enables restart recovery. SQLite stores the current complete checkpoint, not a history of checkpoint versions. `max_history` limits displayed/scoring history, not the full evidence and deduplication ledgers. Both memory and checkpoint size grow with recorded events; export, archival and bounded retention remain future work. Loading validates scoring arithmetic against stored assessments without calling a model, so read cost also grows with retained evidence.
+
+Use a local file on one machine. Writes are serialized, including model evaluation inside the transaction, so a slow model can delay other writers. This implementation is not intended for high-throughput services, network filesystems or distributed coordination. No database encryption is provided; the host must protect the file and its backups. Backend objects, API credentials and callback functions are not serialized, but event context is retained as supplied.
+
+Risk-change callbacks run after a successful commit and remain best-effort. A crash between commit and callback delivery can lose a notification; reopening or retrying the same event does not automatically deliver it again. There is no durable notification outbox yet. The committed incident and evidence remain queryable, so hosts should inspect pending incidents rather than rely solely on callback delivery. Keep untrusted agents from writing host verification fields or authorization decisions.
 
 This release ships SDK data and a console example, not a web interface or framework-specific integration. Task views remain bilateral; full direction-, role-, version- and workspace-specific policy is future work. Live model quality, recovery success rates, token usage and cost have not been benchmarked. See [the roadmap](docs/ROADMAP.md).
 
@@ -113,6 +147,7 @@ SDK 默认只做观察和诊断。它不执行任务，也不授予权限；宿�
 ```bash
 python -m pip install -e .
 PYTHONPATH=. python examples/task_recovery.py
+PYTHONPATH=. python examples/durable_recovery.py
 python -m unittest discover -s agent_relationship/tests -v
 ```
 
@@ -126,7 +161,26 @@ python -m unittest discover -s agent_relationship/tests -v
 4. **由宿主执行**：宿主先核验权限，再通过 `begin_repair(..., host_authorized=True)` 记录授权。这个参数仅记录宿主声明，不能替代权限系统。SDK 不执行方案。
 5. **回收结果**：宿主记录与原任务、双方 Agent、方案及动作一致的新验证事件，再调用 `complete_repair()`。核验通过才可关闭对应异常；失败或部分改善保持待处理状态，历史评分和其他异常仍然保留。过期或不再适用的方案可用 `cancel_repair()` 取消；已开始的尝试取消后仍有冷却期，实际任务的停止由宿主负责。
 
-同一实例内，相同 `event_id` 与内容的重试不会重复记账；相同 ID 携带不同内容会报错。不提供 ID 时，每次调用都产生新事件。恢复方案要求已有 `task_id`。旧事件未关联任务时，可用 `link_incident(incident_id, task_id, reason)` 记录宿主确认的任务关联，原事件保持不变。`event(event_id)` 可读取已超出滚动历史窗口的完整证据。首次严重风险可触发通知，回调失败单独报告，不会让已记录事件重复执行。
+同一实例内，或使用同一个 SQLite 文件的实例与重启之间，相同 `event_id` 与内容的重试不会重复记账；相同 ID 携带不同内容会报错。不提供 ID 时，每次调用都产生新事件。恢复方案要求已有 `task_id`。旧事件未关联任务时，可用 `link_incident(incident_id, task_id, reason)` 记录宿主确认的任务关联，原事件保持不变。`event(event_id)` 可读取已超出滚动历史窗口的完整证据。首次严重风险可触发通知，回调失败单独报告，不会让已记录事件重复执行。
+
+### 重启后接着查看原任务
+
+0.4.0 新增可选的 `storage_path` 和 `storage_timeout`。不传存储路径时仍为内存模式；传入本机 SQLite 文件后，已提交的评分、原始事件、评估来源、去重结果、异常、恢复方案、冷却状态和报告趋势会保留。
+
+```python
+from agent_relationship import RelationshipTracker
+
+with RelationshipTracker(storage_path="relationship.sqlite3") as tracker:
+    pending = tracker.incidents(task_id="report-001", status="open")
+```
+
+每个逻辑工作空间使用独立数据库文件，事件 ID 在文件范围内唯一。每次公开查询会刷新到最新已提交状态；写操作在同一个事务中读取、更新和保存，多个实例使用同一文件时不会用旧状态覆盖彼此。存储失败会回滚，锁等待超过 `storage_timeout` 会明确报错。使用 `with` 或 `close()` 关闭连接。
+
+重开数据库时须保持 `max_history`、`moloch_threshold`、`moloch_min_zone_size` 一致。快照格式、评分版本不支持，或数据损坏、配置不一致时，会报错并保留原数据库，不会悄悄新建空状态。可以为新事件更换模型，旧事件的评估依据和来源保持原样；重开不会重新调用模型，也不会自动重新执行宿主任务。
+
+[持久化离线示例](examples/durable_recovery.py) 演示：开始恢复方案 → 关闭实例 → 重开并核对原任务与去重 → 提交对应核验结果 → 再次重开确认已解决。宿主授权和核验均为明确的模拟数据。
+
+持久化模式须使用 `RelationshipTracker` 公开接口；`tracker.engine` 会拒绝访问，避免直接修改底层状态而未写入数据库。模型后端不能在评估期间递归修改同一持久化实例，以免嵌套事件在外层事务提交前发出通知。
 
 ### 诊断含义与升级注意事项
 
@@ -143,7 +197,11 @@ python -m unittest discover -s agent_relationship/tests -v
 
 ### 当前边界
 
-本批提供 SDK 和命令行示例，尚无网页操作界面、自动执行器或框架专用连接器。所有状态均在内存中，重启会丢失评分、异常、方案和去重记录；暂不具备持久化与回放。`max_history` 只限制历史展示和评分窗口，完整证据与去重记录仍会随事件增长。实例锁不能协调多个进程。
+本批提供 SDK 和命令行示例，尚无网页操作界面、自动执行器或框架专用连接器。默认内存模式在重启后仍会丢失状态；配置 `storage_path` 才会保存。SQLite 保存当前完整快照，尚无历史快照回放、导出归档或有界保留机制。`max_history` 只限制历史展示和评分窗口，完整证据、去重记录、内存和快照大小仍会随事件增长。加载时会依据已存评估核对评分计算，不会调用模型；读取成本也会随保留的证据增长。
+
+当前面向单机本地文件。写操作串行化，模型评估期间也会占用写事务，因此慢模型可能阻塞其他写入；不面向高吞吐、网络文件系统或分布式部署。存储未自动加密，宿主负责保护数据库和备份。API 凭据、后端对象和回调函数不写入快照，但传入的事件上下文会保留。
+
+风险回调在提交成功后执行，仍是尽力通知。若进程在提交后、通知前退出，通知可能丢失；重开实例或重试同一事件不会自动补发。目前尚无持久通知队列。已提交的异常与证据可以查询，宿主应同时核对待处理异常。
 
 宿主必须保护授权和核验字段，不能直接信任 Agent 自报成功。真实模型质量、恢复效果、token 与成本仍待评测。后续顺序见[路线图](docs/ROADMAP.md)。
 

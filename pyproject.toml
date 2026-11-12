@@ -1,6 +1,6 @@
 [project]
 name = "agent-relationship"
-version = "0.3.0"
+version = "0.4.0"
 description = "Task-linked collaboration diagnostics and verified recovery bookkeeping"
 readme = "README.md"
 requires-python = ">=3.10"

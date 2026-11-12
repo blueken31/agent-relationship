@@ -1,5 +1,5 @@
 """
-Agent Relationship — RelationshipTracker v0.3.0
+Agent Relationship — RelationshipTracker v0.4.0
 
 面向开发者的公开 API:
   track / health / can_cooperate / network / history
@@ -9,7 +9,9 @@ Agent Relationship — RelationshipTracker v0.3.0
 import io
 import copy
 import math
+from contextlib import contextmanager
 from functools import wraps
+from os import PathLike
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
 from .engine import RelationshipEngine
@@ -23,7 +25,15 @@ from .types import (
 def _snapshot_read(method):
     @wraps(method)
     def wrapped(self, *args, **kwargs):
-        with self._engine.lock:
+        with self._state_access():
+            return method(self, *args, **kwargs)
+    return wrapped
+
+
+def _snapshot_write(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._state_access(write=True):
             return method(self, *args, **kwargs)
     return wrapped
 
@@ -52,6 +62,8 @@ class RelationshipTracker:
         on_risk_change: Optional[
             Callable[[str, str, str, str, float], None]
         ] = None,
+        storage_path: Optional[Union[str, PathLike]] = None,
+        storage_timeout: float = 5.0,
     ):
         """
         Args:
@@ -62,6 +74,8 @@ class RelationshipTracker:
             moloch_threshold: Moloch 检测阈值
             moloch_min_zone_size: 最小 Moloch 区域大小
             max_history: 每对关系最大交互记录数
+            storage_path: 可选 SQLite 文件；省略时保留内存模式
+            storage_timeout: 等待其他 SQLite 写事务的最长秒数
             on_risk_change: 风险等级变化回调
                 签名: (agent_a, agent_b, old_risk, new_risk, balance) -> None
         """
@@ -79,6 +93,94 @@ class RelationshipTracker:
         self._on_risk_change = on_risk_change
         # 缓存上次 risk，用于检测过渡 (规范化 key)
         self._risk_cache: Dict[Tuple[Optional[str], str, str], str] = {}
+        self._storage = None
+        self._state_depth = 0
+        self._state_writing = False
+        self._closed = False
+        if storage_path is not None:
+            from .storage import SQLiteStore
+            from .state import export_state, restore_state
+
+            self._storage = SQLiteStore(storage_path, timeout=storage_timeout)
+            try:
+                # Initialization is also serialized so two first openers cannot
+                # overwrite each other's initial checkpoint.
+                with self._storage.transaction(write=True) as transaction:
+                    saved = transaction.load()
+                    if saved is None:
+                        transaction.save(export_state(self))
+                    else:
+                        restore_state(self, saved)
+            except BaseException:
+                self._storage.close()
+                raise
+
+    @contextmanager
+    def _state_access(self, write: bool = False):
+        """Refresh under a transaction; commit before publishing any callback.
+
+        One tracker lock protects nested public calls. SQLite serializes separate
+        instances/processes; no stale in-memory state is written over newer data.
+        """
+        with self._engine.lock:
+            if self._closed:
+                raise RuntimeError("tracker is closed")
+            if self._state_depth:
+                if write and not self._state_writing:
+                    raise RuntimeError("cannot mutate during a read snapshot")
+                if write and self._storage is not None:
+                    raise RuntimeError("cannot reenter a persistent mutation")
+                yield
+                return
+            self._state_depth = 1
+            self._state_writing = write
+            baseline = None
+            try:
+                if self._storage is None:
+                    yield
+                else:
+                    from .state import export_state, restore_state
+                    from .storage import StorageError
+
+                    try:
+                        with self._storage.transaction(write=write) as transaction:
+                            saved = transaction.load()
+                            if saved is None:
+                                raise StorageError("persistent checkpoint is missing")
+                            restore_state(self, saved)
+                            baseline = saved
+                            yield
+                            if write:
+                                current = export_state(self)
+                                if current != baseline:
+                                    transaction.save(current)
+                    except BaseException:
+                        if baseline is not None:
+                            # A failed save or commit must not leave the in-memory
+                            # instance claiming that an uncommitted action happened.
+                            restore_state(self, baseline)
+                        raise
+            finally:
+                self._state_depth = 0
+                self._state_writing = False
+
+    def close(self) -> None:
+        """Release the optional database. This never executes or resumes a task."""
+        with self._engine.lock:
+            if self._state_depth:
+                raise RuntimeError("cannot close tracker during an active operation")
+            if not self._closed:
+                if self._storage is not None:
+                    self._storage.close()
+                self._closed = True
+
+    def __enter__(self):
+        if self._closed:
+            raise RuntimeError("tracker is closed")
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.close()
 
     def _create_llm(
         self,
@@ -144,7 +246,7 @@ class RelationshipTracker:
         v0.2.0: 返回结果包含 risk + risk_transition，
         无需再单独调用 health() 来判断关系是否恶化。
         """
-        with self._engine.lock:
+        with self._state_access(write=True):
             result = self._engine.record_interaction(agent_a, agent_b, interaction)
             event_id = result["event_id"]
             if result["duplicate"] and event_id in self._track_results:
@@ -184,8 +286,13 @@ class RelationshipTracker:
                 self._on_risk_change(agent_a, agent_b, prev_risk, risk, output.balance)
             except Exception:
                 output.notification_error = "callback_failed"
-                with self._engine.lock:
-                    self._track_results[event_id] = copy.deepcopy(output)
+                try:
+                    with self._state_access(write=True):
+                        self._track_results[event_id] = copy.deepcopy(output)
+                except Exception:
+                    # Recording already committed. Failure to persist a callback
+                    # diagnostic must not masquerade as an event-write failure.
+                    output.notification_error = "callback_failed_status_unpersisted"
         return output
 
     @_snapshot_read
@@ -211,6 +318,7 @@ class RelationshipTracker:
             open_incident_count=len(self._engine.recovery.open_for_pair(agent_a, agent_b, task_id)),
         )
 
+    @_snapshot_read
     def can_cooperate(
         self,
         agent_a: str,
@@ -374,29 +482,36 @@ class RelationshipTracker:
             at_risk_pairs=sorted(at_risk, key=lambda x: x[2]),
         )
 
+    @_snapshot_read
     def repair_paths(
         self, agent_a: str, agent_b: str
     ) -> List[RepairPath]:
         """返回描述性的恢复路径；成功率尚未校准，不构成执行授权。"""
         return [RepairPath(**path) for path in RepairMechanism.available_paths()]
 
+    @_snapshot_read
     def incidents(self, task_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict]:
         """Task-linked diagnostic cards, including evidence and current recovery state."""
         return self._engine.recovery.list_incidents(task_id, status)
 
+    @_snapshot_write
     def link_incident(self, incident_id: str, task_id: str, reason: str) -> Dict:
         return self._engine.recovery.link_incident(incident_id, task_id, reason)
 
+    @_snapshot_write
     def propose_repair(self, incident_id: str, action: str = "verify_handoff") -> Dict:
         return self._engine.recovery.propose_repair(incident_id, action)
 
+    @_snapshot_write
     def begin_repair(self, plan_id: str, host_authorized: bool = False) -> Dict:
         """Record the host's authorization; this library does not execute any action."""
         return self._engine.recovery.begin_repair(plan_id, host_authorized)
 
+    @_snapshot_write
     def cancel_repair(self, plan_id: str) -> Dict:
         return self._engine.recovery.cancel_repair(plan_id)
 
+    @_snapshot_write
     def complete_repair(self, plan_id: str, outcome: str, evidence_event_id: str) -> Dict:
         with self._engine.lock:
             if evidence_event_id not in self._engine.event_records:
@@ -481,6 +596,8 @@ class RelationshipTracker:
     @property
     def engine(self) -> RelationshipEngine:
         """获取底层引擎 (高级用途)"""
+        if self._storage is not None:
+            raise RuntimeError("durable mode requires public tracker APIs; direct engine mutations are not persisted")
         return self._engine
 
     @property
