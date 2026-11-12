@@ -16,6 +16,7 @@ from agent_relationship import RelationshipTracker
 
 
 DEMO_TASKS = {
+    "purchase-retest": "购车任务 · 复测通过，评估待核对",
     "report-sources": "市场简报 · 核对资料版本",
     "report-review": "研究摘要 · 等待核验结果",
     "report-citations": "客户报告 · 补充引用依据",
@@ -34,6 +35,8 @@ HANDLING = {
     "ready_for_retry": ("待核对后重试", "amber"),
     "cancelled": ("方案已取消", "muted"),
     "needs_plan": ("等待核验", "amber"),
+    "awaiting_assessment": ("复测通过 · 评估待核对", "blue"),
+    "result_recorded": ("核验结果已收到", "blue"),
 }
 OUTCOMES = {"partial": "部分改善", "failed": "核验未通过", "resolved": "已核验解决"}
 RESULTS = {
@@ -54,6 +57,7 @@ def _incident_card(card, title, anchor, task_id=None):
     observation = card.get("observation", {})
     assessment = card.get("assessment", {})
     handling = card.get("handling", {})
+    host = card.get("host_verification") or {}
     state = handling.get("state")
     state_label, tone = HANDLING.get(state, ("等待核对", "muted"))
     outcome = OUTCOMES.get(handling.get("last_outcome"))
@@ -74,14 +78,15 @@ def _incident_card(card, title, anchor, task_id=None):
         if resolution else ""
     )
     verification_html = ""
-    verification_id = handling.get("evidence_event_id")
+    verification_id = host.get("event_id") or handling.get("evidence_event_id")
     if verification_id:
-        verification = handling.get("observation") or {}
-        judgment = handling.get("assessment") or {}
+        verification = host.get("observation") or handling.get("observation") or {}
+        judgment = host.get("assessment") or handling.get("assessment") or {}
         reported = verification.get("result")
         reported = RESULTS.get(reported, reported) if isinstance(reported, str) else None
         verification_source = judgment.get("source")
-        verification_source = "Mock 模拟评估" if verification_source == "mock" else verification_source
+        verification_source = {"mock": "Mock 模拟评估", "model": "模型评估"}.get(
+            verification_source, verification_source)
         verification_html = f"""
     <section class="verification-record"><h4>本次核验结果</h4>
       <div class="evidence-grid">
@@ -89,9 +94,10 @@ def _incident_card(card, title, anchor, task_id=None):
         <section><h4>评估与判断</h4><p class="source">{_text(verification_source, "评估来源未知")}</p><p>{_text(judgment.get("reason"), "评估依据不足")}</p><p>{_text(GOALS.get(judgment.get("goal_status"), "目标判断未知"))}</p></section>
       </div>
     </section>"""
-    elif next_action.get("kind") == "inspect_history":
+    elif next_action.get("kind") in ("inspect_history", "inspect_host_results"):
         plan_refs = "".join(f"<li><code>{_text(item)}</code></li>" for item in handling.get("plan_ids", []))
-        result_refs = "".join(f"<li><code>{_text(item)}</code></li>" for item in handling.get("evidence_event_ids", []))
+        result_refs = "".join(f"<li><code>{_text(item)}</code></li>" for item in
+                              host.get("event_ids", handling.get("evidence_event_ids", [])))
         verification_html = f"""
     <section class="evidence-footer"><h4>待核对的历史方案</h4><ul>{plan_refs or '<li>暂无方案编号</li>'}</ul>
       <h4 class="history-results">对应结果依据</h4><ul>{result_refs or '<li>尚无结果回执</li>'}</ul></section>"""
@@ -103,17 +109,31 @@ def _incident_card(card, title, anchor, task_id=None):
         "needs_reconciliation": "方案开始后出现新依据；先核对原执行情况与变化。",
         "evidence_missing": "部分原始记录缺失；先补齐或核对保存的依据。",
         "cooldown": "保留上次结果与原异常；冷却结束后仍需宿主核对。",
+        "awaiting_assessment": "宿主已报告本次复测通过；先核对尚未完成的协作评估，无需重复执行这次复测。",
+        "result_recorded": "本次结果已保留；先核对结果与评估，再决定如何处理原问题。",
     }.get(state, "依据保留在原任务中；下一步由宿主结合实际情况决定。")
     if next_action.get("kind") == "inspect_history":
         explanation = "历史方案记录无法确定先后；先核对原执行情况与结果依据。"
+    elif next_action.get("kind") == "inspect_host_results":
+        explanation = "同一方案存在多条结果记录；先核对这些回执，不自动选取其中一条。"
+    host_summary = ""
+    if host:
+        result_label_host = {"passed": "宿主报告通过", "failed": "宿主报告未通过",
+                             "reported": "结果已收到，尚未确认通过", "multiple": "多条结果待核对"}.get(host.get("status"), "待核对")
+        judgment = host.get("assessment") or {}
+        judgment_label = ("尚未完成" if judgment.get("status") == "unknown" else
+                          GOALS.get(judgment.get("goal_status"), "待核对"))
+        host_summary = f'<div class="verification-summary"><p><strong>执行验证</strong> {_text(result_label_host)}</p><p><strong>协作评估</strong> {_text(judgment_label)}</p></div>'
+    issue_label = ("原问题：" if host else "") + _text(card.get("title"))
     return f"""
 <article class="task-card" id="{anchor}">
   <div class="card-top">
     <div><p class="eyebrow">{_text(task_id, "尚未关联原任务")}</p><h3>{_text(title)}</h3></div>
     <span class="pill {tone}"><i></i>{_text(state_label)}</span>
   </div>
-  <p class="issue">{_text(card.get("title"))}</p>
+  <p class="issue">{issue_label}</p>
   <p class="observation">{_text(observation.get("narrative"), "尚无宿主叙述；可展开查看已有依据。")}</p>
+  {host_summary}
   <div class="next-step"><span class="next-label">建议下一步</span><strong>{_text(next_action.get("label"), "核对原任务")}</strong><span aria-hidden="true">↗</span></div>
   <p class="handling-note">{explanation}</p>
   <details>
@@ -135,7 +155,18 @@ def render_preview(views, queue, titles=None):
     sequence = 0
     for view in views:
         destination = resolved if view.get("recovery_status") == "resolved" else pending
+        by_id = {card.get("id"): card for card in view.get("incidents", [])}
         for card in view.get("incidents", []):
+            parent = by_id.get(card.get("related_incident_id"))
+            # The same receipt's missing assessment is shown in the original
+            # card. The SDK ledger and API keep both incidents independently.
+            host = card.get("host_verification") or {}
+            parent_host = (parent.get("host_verification") or {}) if parent else {}
+            if (parent and card.get("handling", {}).get("state") == "awaiting_assessment"
+                    and parent.get("handling", {}).get("state") == "awaiting_assessment"
+                    and host.get("event_id") and host.get("event_id") == parent_host.get("event_id")
+                    and host.get("plan_id") == parent_host.get("plan_id")):
+                continue
             sequence += 1
             destination.append(_incident_card(card, titles.get(view["task_id"], view["task_id"]),
                                               f"task-{sequence}", view["task_id"]))
@@ -156,6 +187,7 @@ def render_preview(views, queue, titles=None):
 @media(max-width:500px){body{font-size:14px}.shell{padding:20px 16px 34px}.brand{font-size:12px}.brand-mark{width:28px;height:28px;border-radius:8px}.demo-tag{font-size:11px;padding:4px 8px}.topbar{margin-bottom:25px;flex-wrap:wrap}.caption{font-size:11px;margin-bottom:9px}h1{font-size:26px}.intro p{font-size:14px;max-width:290px}.notice{font-size:12px;padding:10px 12px}.sidebar{gap:3px}.nav-link{font-size:12px;padding:9px 10px;gap:12px}.nav-count{font-size:11px}h2{font-size:16px}.section-heading{align-items:flex-start;flex-wrap:wrap;gap:3px}.section-heading p{font-size:12px}.task-card{padding:18px 17px 0;border-radius:12px}.card-top{align-items:flex-start;gap:10px;flex-wrap:wrap}.card-top>div{flex:1;min-width:170px}h3{font-size:16px}.pill{font-size:11px;padding:3px 8px;margin-top:2px}.eyebrow{font-size:11px}.issue{font-size:14px;margin-top:14px}.observation{font-size:14px}.next-step{font-size:14px;gap:9px}.next-label{font-size:11px}.handling-note{margin-left:0;font-size:12px}details{margin:0 -17px}summary{padding:12px 17px;font-size:12px}.evidence-grid{grid-template-columns:1fr;padding:7px 17px 15px;gap:16px;font-size:12px}.evidence-footer{padding:12px 17px 16px;font-size:12px}.section{margin-bottom:28px}.footer{font-size:12px}.evidence-count{font-size:11px}}
 .verification-record{border-top:1px dashed var(--line);padding-top:14px}.verification-record>h4{margin:0 24px 12px;color:#526b5f}.history-results{margin-top:14px}@media(max-width:500px){.verification-record>h4{margin-left:17px;margin-right:17px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+.verification-summary{margin-top:14px;padding:12px 14px;background:#f2f6f7;border-radius:8px;font-size:13px;color:#526873}.verification-summary strong{display:inline-block;min-width:72px;font-weight:600;color:#304d58}
 </style></head><body><div class="shell">
 <header class="topbar"><a class="brand" href="#top"><span class="brand-mark">AR</span>Agent Relationship</a><span class="demo-tag">离线模拟 · 只读预览</span></header>
 <div class="intro" id="top"><div><div class="caption">Task continuity</div><h1>回到原任务，接着处理。</h1><p>先看问题与下一步，需要时再展开依据。</p></div><div class="intro-right">异常核验与任务执行分开记录<br>由宿主确认权限与实际结果</div></div>
@@ -214,6 +246,21 @@ def build_demo():
         done = start("report-recovered", "交接资料存在版本差异，等待核验。")
         finish("report-recovered", done, "resolved")
         failed(None, "收到一条交接失败观察，但尚未给出原任务编号。")
+        issue = tracker.track("资料整理", "内容核验", {
+            "event_id": "purchase-retest-failure", "task_id": "purchase-retest",
+            "action": "regression_check", "result": "failed",
+            "narrative": "模拟原问题：保存购车任务后，合同确认备忘缺失。",
+            "provenance": {"source": "demo-host", "simulated": True},
+        }).incident_id
+        plan = tracker.propose_repair(issue, action="restricted_retest")
+        tracker.begin_repair(plan["id"], host_authorized=True)
+        tracker.track("资料整理", "内容核验", {
+            "event_id": "purchase-retest-verification", "task_id": "purchase-retest",
+            "action": "restricted_retest", "repair_plan_id": plan["id"],
+            "result": "success", "verification_passed": True,
+            "narrative": "模拟宿主回执：原缺陷的限定样本复测通过，协作评估尚未完成。",
+            "provenance": {"source": "demo-host", "simulated": True},
+        })
         return [tracker.task_view(task_id) for task_id in DEMO_TASKS], tracker.task_queue()
 
 

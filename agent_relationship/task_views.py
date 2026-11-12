@@ -14,11 +14,13 @@ _STATE_PRIORITY = {
     "evidence_missing": 0, "needs_reconciliation": 1, "needs_task_link": 2,
     "awaiting_authorization": 3, "ready_for_retry": 4, "cancelled": 4,
     "needs_plan": 4, "cooldown": 5, "awaiting_result": 6, "resolved": 7,
+    "awaiting_assessment": 5, "result_recorded": 5,
 }
 _CATEGORY_PRIORITY = {
     "goal_violation": 0, "material_harm": 1, "task_failure": 2,
     "collaboration_risk": 3, "evidence_needed": 4,
 }
+_HOST_OUTCOMES = {"success", "failed", "error", "timeout", "partial", "unknown", "completed", "ok"}
 
 
 def _text(value, limit=240):
@@ -77,9 +79,79 @@ def _observation(event_id, event):
 
 
 def _assessment(event):
-    return {"reason": _text(event.get("reason")),
+    return {"status": event.get("assessment_status", "unknown"),
+            "error_code": _text(event.get("error_code"), 80) or None,
+            "reason": _text(event.get("reason")),
             "source": _text(event.get("assessment_source"), 80) or "unknown",
             "goal_status": _text(event.get("goal_status"), 40) or "unknown"}
+
+
+def _matches_plan_result(event, plan):
+    """Use stored bindings and ingestion order, never narrative or UUID order.
+
+    Host fields are declarations, not independently authenticated receipts.
+    The host still checks external occurrence time and protects these fields.
+    Missing sequence metadata must not turn old evidence into a fresh result.
+    """
+    context = event.get("context")
+    sequence, start = event.get("sequence"), plan.get("start_sequence")
+    return (
+        isinstance(context, dict) and bool(plan.get("task_id"))
+        and context.get("repair_plan_id") == plan["id"]
+        and event.get("task_id") == plan["task_id"]
+        and isinstance(event.get("result"), str) and event["result"] in _HOST_OUTCOMES
+        and all(isinstance(event.get(key), str) for key in ("initiator", "target"))
+        and {event.get("initiator"), event.get("target")} == set(plan["agents"])
+        and event.get("action") == plan["action"]
+        and type(sequence) is int and type(start) is int and sequence > start
+        and plan.get("started_at") is not None
+        and type(event.get("timestamp")) in (int, float)
+        and math.isfinite(event["timestamp"]) and event["timestamp"] >= plan["started_at"]
+    )
+
+
+def _host_verification(plan, events):
+    if plan is None:
+        return None
+    ids = sorted((key for key, event in events.items() if _matches_plan_result(event, plan)),
+                 key=lambda key: events[key]["sequence"])
+    if not ids:
+        return None
+    # Separate IDs are separate receipts. The host must reconcile competing
+    # records; even equal timestamps or identical prose cannot pick a winner.
+    event_id = ids[0] if len(ids) == 1 else None
+    event = events[event_id] if event_id else None
+    verified = bool(event and event["context"].get("verification_passed") is True
+                    and event.get("result") == "success")
+    status = ("multiple" if event is None else "passed" if verified else
+              "failed" if event.get("result") in ("failed", "error", "timeout") else "reported")
+    return {
+        "status": status, "plan_id": plan["id"], "incident_id": plan["incident_id"],
+        "event_id": event_id, "event_ids": ids,
+        "observation": _observation(event_id, event) if event else None,
+        "assessment": _assessment(event) if event else None,
+        "source": "host_report", "independently_verified": False,
+        "grants_permission": False,
+    }
+
+
+def _related_result_plan(incident, plans, events, incidents):
+    """Correlate only an evidence issue entirely about one pending plan's result."""
+    if incident["category"] != "evidence_needed" or not incident.get("evidence_ids"):
+        return None
+    owners = {item["id"]: item for item in incidents}
+    matches = []
+    for plan in plans:
+        owner = owners.get(plan["incident_id"])
+        if (plan["state"] == "started" and owner and owner["status"] == "open"
+                and owner["task_id"] == incident["task_id"]
+                and plan["task_id"] == incident["task_id"]
+                and owner["agents"] == incident["agents"]
+                and plan["agents"] == incident["agents"]
+                and all(key in events and _matches_plan_result(events[key], plan)
+                        for key in incident["evidence_ids"])):
+            matches.append(plan)
+    return matches[0] if len(matches) == 1 else None
 
 
 def _card_order(card):
@@ -88,9 +160,13 @@ def _card_order(card):
             -card["updated_at"], card["id"])
 
 
-def _incident_card(incident, plans, events, now, cooldown_seconds):
+def _incident_card(incident, plans, events, now, cooldown_seconds, incidents=()):
     related_plans = [p for p in plans if p["incident_id"] == incident["id"]]
     plan, candidates, ambiguous = _select_plan(incident, related_plans)
+    associated = (_related_result_plan(incident, plans, events, incidents)
+                  if not related_plans else None)
+    result_plan = plan or associated
+    host_verification = _host_verification(result_plan, events)
     original_ids = list(incident.get("evidence_ids", []))
     evidence_ids = list(dict.fromkeys(original_ids))
     resolution_id = incident.get("resolution_event_id")
@@ -99,6 +175,8 @@ def _incident_card(incident, plans, events, now, cooldown_seconds):
     for event_id in ([resolution_id] if resolution_id else []) + result_ids:
         if event_id not in evidence_ids:
             evidence_ids.append(event_id)
+    if host_verification:
+        evidence_ids.extend(key for key in host_verification["event_ids"] if key not in evidence_ids)
     missing_count = sum(event_id not in events for event_id in evidence_ids)
     missing_count += sum(not p.get("evidence_event_id") for p in completed)
     missing_count += incident["status"] == "resolved" and not resolution_id
@@ -121,16 +199,28 @@ def _incident_card(incident, plans, events, now, cooldown_seconds):
     elif ambiguous:
         state = "needs_reconciliation"
         action = _action("inspect_history", "核对历史方案与结果", incident)
+    elif host_verification and host_verification["status"] == "multiple":
+        state = "needs_reconciliation"
+        action = _action("inspect_host_results", "核对已有核验结果", incident, result_plan)
     elif incident["status"] == "resolved":
         state = "resolved"
         action = _action("return_to_task", "返回原任务", incident, plan)
     elif incident.get("task_id") is None:
         state = "needs_task_link"
         action = _action("link_task", "关联原任务", incident)
-    elif plan and plan["state"] == "started":
-        if plan.get("incident_version") != incident["version"]:
+    elif result_plan and result_plan["state"] == "started":
+        owner = next((item for item in incidents if item["id"] == result_plan["incident_id"]), incident)
+        if result_plan.get("incident_version") != owner["version"]:
             state = "needs_reconciliation"
-            action = _action("reconcile_plan", "核对新增依据与原执行结果", incident, plan)
+            action = _action("reconcile_plan", "核对新增依据与原执行结果", incident, result_plan)
+        elif host_verification:
+            judgment = host_verification["assessment"]
+            if host_verification["status"] == "passed" and judgment["status"] == "unknown":
+                state = "awaiting_assessment"
+                action = _action("inspect_assessment", "核对协作评估", incident, result_plan)
+            else:
+                state = "result_recorded"
+                action = _action("review_host_result", "核对已记录的核验结果", incident, result_plan)
         else:
             state = "awaiting_result"
             action = _action("inspect_host_result", "查询原执行结果", incident, plan)
@@ -157,6 +247,8 @@ def _incident_card(incident, plans, events, now, cooldown_seconds):
         "agents": list(incident.get("agents", [])),
         "original_task_id": incident.get("original_task_id"),
         "task_link_reason": _text(incident.get("task_link_reason")),
+        "related_incident_id": associated["incident_id"] if associated else None,
+        "host_verification": host_verification,
         "observation": _observation(latest_id, latest),
         "assessment": {
             "category": incident["category"],
@@ -178,7 +270,9 @@ def _incident_card(incident, plans, events, now, cooldown_seconds):
         "evidence_ids": evidence_ids, "resolution_event_id": resolution_id,
         "missing_evidence_count": missing_count,
         "updated_at": max([_time(incident.get("updated_at"))]
-                          + [_plan_order(p)[0] for p in related_plans]),
+                          + [_plan_order(p)[0] for p in related_plans]
+                          + [_time(events[key].get("timestamp"))
+                             for key in (host_verification["event_ids"] if host_verification else [])]),
     }
 
 
@@ -188,7 +282,7 @@ def project_task(task_id, incidents, plans, events, now, cooldown_seconds):
         raise ValueError("task_id must be a nonempty string")
     related = [i for i in incidents if i.get("task_id") == task_id]
     related_plans = [p for p in plans if p.get("task_id") == task_id]
-    cards = sorted((_incident_card(i, related_plans, events, now, cooldown_seconds)
+    cards = sorted((_incident_card(i, related_plans, events, now, cooldown_seconds, related)
                     for i in related), key=_card_order)
     opened = [c for c in cards if c["status"] == "open"]
     resolved = [c for c in cards if c["status"] == "resolved"]
@@ -227,9 +321,11 @@ def project_task(task_id, incidents, plans, events, now, cooldown_seconds):
         "missing_evidence_count": missing_count,
         "primary_incident_id": primary["id"] if primary else None,
         "primary_action": action,
-        "summary": primary["title"] if primary else ("核对原方案状态" if active_count
+        "summary": ("宿主复测已通过，协作评估待核对" if opened and all(
+            card["handling"]["state"] == "awaiting_assessment" for card in opened)
+            else primary["title"] if primary else ("核对原方案状态" if active_count
                                                     else "暂无已记录异常" if event_ids
-                                                    else "尚无任务观察记录"),
+                                                    else "尚无任务观察记录")),
         "updated_at": max([card["updated_at"] for card in cards]
                           + [_time(events[event_id].get("timestamp")) for event_id in event_ids], default=0.0),
         "incidents": cards,
@@ -243,7 +339,7 @@ def project_queue(incidents, plans, events, now, cooldown_seconds):
     projected = [task for task in projected if task["recovery_status"] in ("needs_attention", "waiting")]
     projected.sort(key=lambda task: (_card_order(task["incidents"][0]), task["task_id"]))
     tasks = [{key: value for key, value in task.items() if key != "incidents"} for task in projected]
-    unlinked = sorted((_incident_card(i, plans, events, now, cooldown_seconds)
+    unlinked = sorted((_incident_card(i, plans, events, now, cooldown_seconds, incidents)
                        for i in incidents if i["status"] == "open" and i.get("task_id") is None),
                       key=_card_order)
     return {"tasks": tasks, "unlinked_incidents": unlinked}

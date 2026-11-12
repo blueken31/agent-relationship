@@ -50,6 +50,11 @@ class TestTaskPreview(unittest.TestCase):
             },
             "next_action": {"label": attack}, "evidence_ids": [attack],
             "resolution_event_id": attack,
+            "host_verification": {
+                "status": "passed", "event_id": attack, "event_ids": [attack],
+                "observation": {"result": attack, "narrative": attack},
+                "assessment": {"status": "unknown", "source": attack, "reason": attack},
+            },
         }
         view = {"task_id": attack, "recovery_status": "waiting", "incidents": [card]}
         html = render_preview([view], {"tasks": [view], "unlinked_incidents": []}, {attack: attack})
@@ -73,6 +78,37 @@ class TestTaskPreview(unittest.TestCase):
         self.assertIn("report-citations-verification", html)
         self.assertIn("已对齐资料版本，引用来源仍需补充", html)
         self.assertIn("三处引用尚未对应到原始资料", html)
+
+    def test_passed_retest_and_unknown_assessment_share_one_original_task_card(self):
+        views, _ = build_demo()
+        view = next(view for view in views if view["task_id"] == "purchase-retest")
+        self.assertEqual(view["open_incident_count"], 2)
+        html = render_preview([view], {"tasks": [view], "unlinked_incidents": []})
+        parsed = Elements()
+        parsed.feed(html)
+        self.assertEqual(parsed.tags.count("article"), 1)
+        self.assertEqual(parsed.pill_labels, ["复测通过 · 评估待核对"])
+        self.assertIn("执行验证", html)
+        self.assertIn("宿主报告通过", html)
+        self.assertIn("协作评估", html)
+        self.assertIn("尚未完成", html)
+        self.assertIn("核对协作评估", html)
+        self.assertIn("purchase-retest-verification", html)
+        self.assertNotIn("准备核验方案", html)
+        self.assertNotIn("已核验解决", parsed.pill_labels)
+
+    def test_unrelated_assessment_issue_is_not_hidden_by_preview_grouping(self):
+        from copy import deepcopy
+        views, _ = build_demo()
+        view = deepcopy(next(v for v in views if v["task_id"] == "purchase-retest"))
+        child = next(c for c in view["incidents"] if c["related_incident_id"])
+        child["related_incident_id"] = None
+        child["observation"]["narrative"] = "另一条未关联的未知观察"
+        parsed = Elements()
+        html = render_preview([view], {"tasks": [view], "unlinked_incidents": []})
+        parsed.feed(html)
+        self.assertEqual(parsed.tags.count("article"), 2)
+        self.assertIn("另一条未关联的未知观察", html)
 
     def test_preview_has_only_local_navigation_and_evidence_controls(self):
         html = render_preview([], {"tasks": [], "unlinked_incidents": []})
