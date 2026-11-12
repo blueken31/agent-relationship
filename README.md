@@ -1,384 +1,150 @@
-# Agent Relationship v0.2.0
+# Agent Relationship 0.3.0
 
 [English](#english) · [中文](#中文)
 
----
-
 ## English
 
-> **The relationship-awareness layer for multi-agent systems** — lightweight, standalone, zero required dependencies
+A lightweight Python SDK for **task-linked collaboration diagnostics and verified recovery bookkeeping**. It records interactions, preserves the evidence behind an assessment, keeps unresolved incidents visible, and helps a host application prepare a bounded recovery action.
+
+The SDK runs in **observation mode**. Its diagnoses and recovery plans do not grant permissions or execute tasks. Your host application remains responsible for authorization, budgets, actual execution and validation of evidence.
+
+Python 3.10+, zero required runtime dependencies. HTTP adapters use the standard library.
+
+### Install and try the complete offline example
+
+For this source checkout:
 
 ```bash
-pip install agent-relationship
+python -m pip install -e .
+PYTHONPATH=. python examples/task_recovery.py
+python -m unittest discover -s agent_relationship/tests -v
 ```
 
-### The Problem
+The example uses explicit simulated fixtures. It demonstrates a failed handoff, an evidence card, a single bounded check, a verified result and retention of the original task ID. It makes no model calls and does not execute an external task. The host's authorization and verification are clearly marked demo functions.
 
-Every multi-agent system you build today — LangGraph, CrewAI, AutoGen — shares a blind spot:
-
-**All frameworks care about what agents do. None cares about what happens between them.**
-
-```
-What you can see                     What you can't
-──────────────────                   ──────────────────
-Agent A → Agent B: task done         Is the A↔B relationship deteriorating?
-carol completed 12 delegations        Is carol helping or free-riding?
-System throughput is rising           alice↔carol balance has dropped to 0.18
-                                      Three agents are forming a Moloch loop
-```
-
-### Five Pain Points
-
-| Without agent-relationship | Consequence |
-|---|---|
-| **Free-riding undetected** — carol over-extracts resources until the system collapses | 3 hours debugging reveals broken relationship, but logs only show "occasional timeout" |
-| **Escalating competition invisible** — 3 agents enter a toxic competitive loop, throughput drops without explanation | Downgrade, retry, add resources — treating symptoms, not the cause |
-| **Broken relationships have no repair path** — once trust falls below threshold, cooperation is permanently blocked | The core value of multi-agent systems is silently canceled |
-| **Interactions are unobservable** — logs show "request timeout" with zero relationship-level diagnostics | Ops teams fly blind |
-| **Dev/prod behavior divergence** — everything works in mock, then real LLM semantic judgments produce completely different outcomes | Deploy = break |
-
-### The Solution
+### Record evidence and inspect the original task
 
 ```python
 from agent_relationship import RelationshipTracker
 
-tracker = RelationshipTracker(llm="deepseek")
-
-# One line to record an interaction
-result = tracker.track("alice", "carol", {
-    "action": "resource_exchange", "result": "success",
-    "narrative": "carol over-extracted resources"
+tracker = RelationshipTracker(llm="mock")  # Simulated, not a semantic evaluator.
+result = tracker.track("organizer", "reviewer", {
+    "event_id": "handoff-001",
+    "task_id": "report-001",
+    "action": "handoff",
+    "goal": "Produce the report from verified source data",
+    "expected_result": "Both agents use the same source version",
+    "result": "failed",
+    "narrative": "The host observed different source versions.",
+    "evidence_refs": ["host-log:handoff-001"],
+    "provenance": {"source": "host-runner"},
 })
 
-# Risk awareness built into the return value — no separate health() call needed
-if result.risk_transition == "worsened":
-    print(f"⚠️ Relationship deteriorating: {result.prev_balance:.2f} → {result.balance:.2f}")
-
-# Pre-cooperation check — integrate into agent decision loop
-check = tracker.can_cooperate("alice", "carol")
-if not check["can"] and check["needs_repair"]:
-    repair = tracker.can_cooperate("alice", "carol", try_repair=True)
-
-# Real-time risk change callback
-def on_alert(a, b, old_risk, new_risk, balance):
-    print(f"🚨 {a}↔{b}: {old_risk} → {new_risk}")
-
-tracker = RelationshipTracker(on_risk_change=on_alert)
-
-# One-line health summary
-print(tracker.summary())
+print(result.assessment_status, result.assessment_source, result.reason)
+print(tracker.incidents(task_id="report-001", status="open"))
+print(tracker.history("organizer", "reviewer", task_id="report-001"))
+print(tracker.can_cooperate("organizer", "reviewer", task_id="report-001"))
 ```
 
-**Agent frameworks teach agents how to act. Agent Relationship tells them what's happening between each other.**
+Use stable `event_id` values when retrying. Repeating an identical ID and payload is idempotent **within one tracker instance**; reusing it for different content raises `ValueError`. Omitting the ID creates a new event each time. `task_id` is required for a recovery proposal. For a legacy unscoped issue, `link_incident(incident_id, task_id, reason)` records an explicit host association without rewriting the original event. `event(event_id)` retrieves full retained evidence even after the rolling history window expires. Evidence references and provenance are supplied by the host and retained as context; the SDK does not fetch or independently authenticate them. Do not pass secrets or unnecessary personal data into model-bound context.
 
-### Not Another Agent Framework
+### Recovery lifecycle
 
-| | Agent Relationship | LangGraph / CrewAI / AutoGen |
+1. `incidents(task_id=..., status="open")` returns task-linked issues with `id`, `title`, observed `reason`, separate `assessment_reason`, `evidence_ids` and a recommended action.
+2. `propose_repair(incident_id, action="verify_handoff")` returns a proposal with `id`, `scope`, `success_criteria`, `max_attempts=1` and `grants_permission=False`.
+3. The host checks its own permissions and calls `begin_repair(plan_id, host_authorized=True)` to record that decision. This flag is a host declaration, not an access-control mechanism.
+4. The host performs the bounded action, validates the result and records a new event for the same agents and task, with the plan's `action`, `repair_plan_id`, actual `result` and `verification_passed`.
+5. `complete_repair(plan_id, outcome="resolved", evidence_event_id=...)` attaches the recorded evidence. Resolution requires a successful host verification and a compatible assessment; unrelated, old, unknown or contradicted evidence cannot close the issue. Goal-violation incidents additionally require the new goal judgment to be `met`.
+
+Supported proposal types are `verify_handoff`, `restricted_retest` and `reassign_task`. They describe bounded work; none is an executor. Failed or partial recovery leaves the issue open and applies a cooldown. New adverse evidence prevents an older plan from resolving an updated issue. Resolving one incident does not erase historical scores or other unresolved issues. `cancel_repair(plan_id)` abandons a stale or unwanted plan without inventing an outcome. Canceling a started attempt retains the cooldown; the host must separately stop any ongoing execution, because cancellation here is bookkeeping only.
+
+See [the executable example](examples/task_recovery.py) for the full sequence.
+
+### Assessments, scores and notifications
+
+- Each event uses one bilateral assessment for the two participants and the shared goal. Status, source, model, schema version, brief reason and safe error category remain visible.
+- Missing evidence, invalid model output and provider failure produce `unknown`; they do not become positive fallback estimates. Unknown events do not increase balance or trust.
+- A participant's loss cannot be canceled by the other's gain. Reported goal violations remain unfavorable even when both participants benefit.
+- `confidence` in tracker reports measures assessed-event quantity using `n / (n + 5)`. It is **not** a calibrated probability or proof of evidence quality. Inspect provenance and assessment source as well. An unknown latest assessment displays zero current confidence and an unknown network cell; it is excluded from the known-score average.
+- Serious unresolved incidents are stored separately from recent scores. Subsequent successes cannot close them.
+- The first high/critical observation can notify `on_risk_change`. Callback failures are reported as `notification_error="callback_failed"`, without rolling back or duplicating the event.
+- `detect_moloch()` retains its legacy name but reports connected regions of low collaboration scores, not proof of competitive escalation or malicious intent. Reading it or `summary()` does not advance the trend.
+
+### Backend configuration
+
+| `llm` | Interface | Configuration |
 |---|---|---|
-| Task orchestration | ❌ | ✅ |
-| Tool calling | ❌ | ✅ |
-| Memory management | ❌ | ✅ |
-| Bilateral relationship modeling (balance + trust + type) | ✅ | ❌ |
-| Moloch competition escalation detection | ✅ | ❌ |
-| Relationship repair paths (3 paths + cooldown) | ✅ | ❌ |
-| Risk transition awareness (low→medium→high→critical) | ✅ | ❌ |
-| Real-time risk change callbacks | ✅ | ❌ |
-| OpenAI / DeepSeek / Anthropic / Mock | ✅ | Each bound to one |
+| `mock` | Explicit deterministic scenarios | No credentials; unsupported scenarios are unknown |
+| `openai` | Chat Completions-compatible HTTP API | `OPENAI_API_KEY`, optional `OPENAI_MODEL` and `OPENAI_BASE_URL` |
+| `deepseek` | Chat Completions-compatible HTTP API | `DEEPSEEK_API_KEY`, optional `DEEPSEEK_MODEL` and `DEEPSEEK_BASE_URL` |
+| `anthropic` | Messages HTTP API | `ANTHROPIC_API_KEY`, optional `ANTHROPIC_MODEL` |
 
-**Complementary, not competitive.** Three lines of code to integrate with any framework.
+An explicit `model=` overrides the corresponding environment variable. Select a model compatible with the adapter; the OpenAI adapter does not implement Responses API or claim support for every model. Real-model calls may incur provider costs. The repository's deterministic tests and HTTP mocks do not establish semantic accuracy on real workloads.
 
-### Quick Start
+### Migrating from 0.2.x
 
-```python
-from agent_relationship import RelationshipTracker
+| Previous behavior | 0.3.0 contract |
+|---|---|
+| No history could return `can=True` | Returns `can=False`, `decision="unknown"`; the host applies its existing policy |
+| `try_repair=True` could permit the original task | Returns a recovery-required recommendation; use a task-bound plan |
+| Default cooperation threshold was `0.4` | Default is `0.7`, with at least three assessed events and no open incident |
+| `can` was easy to treat as permission | All results include `advisory_only=True` and `mode="observe"` |
+| Model errors silently became heuristic scores | Explicit unknown status and safe error category; `TrackResult.impact` may be `None`; unknown network cells and an empty known-score average are `None` |
+| Mock inferred meaning from narrative keywords | Mock uses structured action/result or an explicit `scenario` fixture |
+| Fixed repair success probabilities | `success_probability=None`; no calibrated probability is claimed |
+| Notification failure appeared to fail recording | Event stays recorded; notification error is separate |
 
-# Zero config
-tracker = RelationshipTracker()
+Branch on `decision`, not only `can`: `continue`, `review`, `unknown` and `repair_required` are diagnostic recommendations. A false value does not itself cancel a host task; a true value does not authorize one. The legacy `estimate_impact()` convenience method returns neutral `0.0` on unknown; use structured assessments to retain that uncertainty.
 
-# Record interactions
-tracker.track("alice", "bob", {
-    "action": "help",
-    "result": "success",
-    "narrative": "alice helped bob complete data analysis"
-})
+### Current boundaries
 
-# Query health
-h = tracker.health("alice", "bob")
-print(f"balance={h.balance:.2f}, risk={h.risk}")
-```
+State is in memory. Restarting a tracker loses scores, incidents, plans and deduplication; there is no durable storage or replay yet. `max_history` limits displayed/scoring history, not the full evidence and deduplication ledgers, whose memory use grows with recorded events. Instance-level locking is not cross-process coordination. Keep untrusted agents from writing host verification fields or authorization decisions.
 
-### 8 Core Methods
-
-| Method | Purpose |
-|--------|---------|
-| `track(a, b, ctx)` | Record an interaction; returns balance + risk + risk_transition |
-| `health(a, b)` | Query bilateral relationship health |
-| `can_cooperate(a, b)` | Integrate into agent decision loop; returns repair paths when needed |
-| `history(a, b)` | Query interaction history (reverse chronological) |
-| `network(ids)` | Full relationship matrix + ASCII heatmap |
-| `detect_moloch()` | Competition escalation detection with typed MolochZone results |
-| `repair_paths(a, b)` | Three repair paths (adaptive filtering by balance) |
-| `summary()` | One-line Markdown health summary |
-
-### Four Engine Support
-
-```python
-tracker = RelationshipTracker()                        # Mock — zero config
-tracker = RelationshipTracker(llm="openai")            # OpenAI GPT / Codex
-tracker = RelationshipTracker(llm="deepseek")          # DeepSeek V4 Flash
-tracker = RelationshipTracker(llm="anthropic")         # Anthropic Claude
-```
-
-| Engine | Env Variable | Default Model |
-|--------|-------------|---------------|
-| `mock` | none | — |
-| `openai` | `OPENAI_API_KEY` | `gpt-4o` |
-| `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-v4-flash` |
-| `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
-
-### Framework Integration
-
-#### LangGraph — with decision loop
-
-```python
-from agent_relationship import RelationshipTracker
-
-tracker = RelationshipTracker(llm="deepseek")
-
-def agent_node(state):
-    agent, target = state["agent"], state["target"]
-
-    check = tracker.can_cooperate(agent, target)
-    if not check["can"]:
-        if check["needs_repair"]:
-            check = tracker.can_cooperate(agent, target, try_repair=True)
-        if not check["can"]:
-            return {"status": "skipped", "reason": check["reason"]}
-
-    result = execute_task(state)
-    tracker.track(agent, target, {
-        "action": state["action"],
-        "result": result["status"],
-        "narrative": result["summary"],
-    })
-    return result
-```
-
-#### CrewAI
-
-```python
-tracker = RelationshipTracker(llm="anthropic")
-
-class MyAgent(Agent):
-    def execute_task(self, task, context=None):
-        result = super().execute_task(task, context)
-        for other in context.get("collaborators", []):
-            tracker.track(self.role, other.role, {
-                "action": task.description,
-                "result": "success" if result else "failed",
-                "narrative": str(result)[:500],
-            })
-        return result
-```
-
-### Specs
-
-- **Zero required dependencies**: core engine + MockLLM are fully self-contained, HTTP via `urllib`
-- **Python ≥ 3.10**
-- **Tests**: 57 unit + regression tests covering all 8 public APIs + 4 LLM backends
-- **Source:test ratio**: 1,651 : 684 ≈ 2.4 : 1
-- **Optional dependencies**: `pip install agent-relationship[openai]` / `[anthropic]` / `[all]`
-
-### License
-
-MIT
-
----
+This release ships SDK data and a console example, not a web interface or framework-specific integration. Task views remain bilateral; full direction-, role-, version- and workspace-specific policy is future work. Live model quality, recovery success rates, token usage and cost have not been benchmarked. See [the roadmap](docs/ROADMAP.md).
 
 ## 中文
 
-> **多 Agent 系统的关系感知层** — 轻量、独立、零必选依赖
+这是一个轻量 Python SDK，用于**发现任务协作异常、保留判断依据、准备受限恢复方案，并记录验证结果**。使用者能沿着原任务查看发生了什么、推荐处理什么、问题是否真正解除。
+
+SDK 默认只做观察和诊断。它不执行任务，也不授予权限；宿主系统负责授权、预算、实际操作和证据核验。Python 3.10 及以上，运行时零必选依赖。
+
+### 从完整离线示例开始
 
 ```bash
-pip install agent-relationship
+python -m pip install -e .
+PYTHONPATH=. python examples/task_recovery.py
+python -m unittest discover -s agent_relationship/tests -v
 ```
 
-### 它解决什么问题
+示例完整演示“交接失败 → 查看依据 → 准备一次受限核验 → 记录验证结果 → 保留原任务等待宿主继续”。所有数据和宿主行为均为模拟，不调用真实模型，不执行外部任务。
 
-你今天构建的任何多 Agent 系统 — LangGraph、CrewAI、AutoGen — 都有一个盲区：
+### 接入与使用过程
 
-**所有框架只关心 Agent 在做什么，不关心 Agent 之间发生了什么。**
+1. **记录事实**：由宿主提供稳定的 `event_id`、原 `task_id`、动作、任务目标、预期结果、实际结果及证据来源。避免让业务使用者手填双方收益。`evidence_refs` 和 `provenance` 会原样保留，SDK 不会主动获取或认证其内容。
+2. **查看异常**：`incidents()` 返回任务、观察到的事实、独立的模型判断理由及证据 ID。`history()` 可查看原事件描述与评估来源；`health(..., task_id=...)` 和 `can_cooperate(..., task_id=...)` 提供任务范围内的诊断。
+3. **准备方案**：`propose_repair()` 提供“核对交接资料”“限定样本复测”“宿主核验后改派”三类方案，明确范围、成功标准和最多一次执行。
+4. **由宿主执行**：宿主先核验权限，再通过 `begin_repair(..., host_authorized=True)` 记录授权。这个参数仅记录宿主声明，不能替代权限系统。SDK 不执行方案。
+5. **回收结果**：宿主记录与原任务、双方 Agent、方案及动作一致的新验证事件，再调用 `complete_repair()`。核验通过才可关闭对应异常；失败或部分改善保持待处理状态，历史评分和其他异常仍然保留。过期或不再适用的方案可用 `cancel_repair()` 取消；已开始的尝试取消后仍有冷却期，实际任务的停止由宿主负责。
 
-```
-你的 Agent 系统看得到的             你的 Agent 系统看不到的
-─────────────────────────         ─────────────────────────
-Agent A → Agent B: 任务完成        A 和 B 的关系在恶化吗？
-carol 完成了 12 个委托              carol 在帮助还是在搭便车？
-系统吞吐量在上升                    alice↔carol 之间的 balance 只剩 0.18
-                                   三个 Agent 正在形成 Moloch 竞争闭环
-```
+同一实例内，相同 `event_id` 与内容的重试不会重复记账；相同 ID 携带不同内容会报错。不提供 ID 时，每次调用都产生新事件。恢复方案要求已有 `task_id`。旧事件未关联任务时，可用 `link_incident(incident_id, task_id, reason)` 记录宿主确认的任务关联，原事件保持不变。`event(event_id)` 可读取已超出滚动历史窗口的完整证据。首次严重风险可触发通知，回调失败单独报告，不会让已记录事件重复执行。
 
-### 五个具体痛点
+### 诊断含义与升级注意事项
 
-| 没有 agent-relationship | 带来的后果 |
-|---|---|
-| **搭便车不被发现** — carol 持续超额提取资源，系统到崩溃才暴露 | 排查 3 小时发现是关系破裂，但日志里只有「偶尔超时」 |
-| **竞争升级不可见** — 3 个 Agent 形成恶性竞争闭环，吞吐量下降但没人知道原因 | 降级、重试、加资源——治标不治本 |
-| **关系破裂无修复路径** — 一旦 trust 跌破阈值，永久无法合作，系统变「单 Agent」 | 多 Agent 系统的核心优势被自动取消 |
-| **交互不可观测** — 日志只有「请求超时」，没有关系视角的诊断信息 | 运维靠猜 |
-| **开发与生产行为不一致** — Mock 环境一切正常，生产 LLM 的语义判断产生完全不同的结果 | 上线即翻车 |
+- `assessed` 表示完成评估，`unknown` 表示证据不足、输出非法或模型不可用；未知不等于健康，也不自动增加信任。
+- `assessment_source` 明确区分 `mock` 和 `model`。Mock 只提供确定性场景，不理解自由叙述；真实模型判断也需要业务验证。
+- 任务目标优先于双方收益。一方损失不能被另一方收益抵消；尚未解决的重大事件不能被后续小成功冲淡。
+- `confidence` 是已评估事件数量的启发式指标 `n / (n + 5)`，不是正确率或可靠性概率。
+- `can_cooperate()` 的 `continue / review / unknown / repair_required` 都是建议。无历史时 `can=False`；默认门槛改为 `0.7`，还需要至少三条已评估事件且无待处理异常。宿主应按 `decision` 和原有规则处理，不能把布尔值直接当作权限。
+- `try_repair=True` 不再放行原任务。应改用明确关联异常和任务的恢复方案。
+- 模型失败不再使用正向降级评分；未知事件的 `impact` 可以为 `None`。修复成功率不再展示未经校准的固定数字。
+- `detect_moloch()` 保留旧接口名，目前只检测低分关系构成的异常区域，不能证明恶性竞争、动机或因果。
 
-### 有了它
+模型适配器支持 OpenAI Chat Completions 兼容接口、DeepSeek 兼容接口和 Anthropic Messages。显式 `model=` 优先于环境变量；OpenAI 适配器未实现 Responses API。真实调用可能产生费用，现有离线与 HTTP 模拟测试不代表真实语义质量验收。
 
-```python
-from agent_relationship import RelationshipTracker
+### 当前边界
 
-tracker = RelationshipTracker(llm="deepseek")
+本批提供 SDK 和命令行示例，尚无网页操作界面、自动执行器或框架专用连接器。所有状态均在内存中，重启会丢失评分、异常、方案和去重记录；暂不具备持久化与回放。`max_history` 只限制历史展示和评分窗口，完整证据与去重记录仍会随事件增长。实例锁不能协调多个进程。
 
-# 一行记录交互
-result = tracker.track("alice", "carol", {
-    "action": "resource_exchange", "result": "success", "narrative": "carol 超额提取"
-})
+宿主必须保护授权和核验字段，不能直接信任 Agent 自报成功。真实模型质量、恢复效果、token 与成本仍待评测。后续顺序见[路线图](docs/ROADMAP.md)。
 
-# 自带风险感知 — 无需再单独查询
-if result.risk_transition == "worsened":
-    print(f"⚠️ 关系恶化: {result.prev_balance:.2f} → {result.balance:.2f}")
-
-# 协作前检查 — 集成到 Agent 决策循环
-check = tracker.can_cooperate("alice", "carol")
-if not check["can"] and check["needs_repair"]:
-    repair = tracker.can_cooperate("alice", "carol", try_repair=True)
-
-# 风险变化自动通知
-def on_alert(a, b, old_risk, new_risk, balance):
-    print(f"🚨 {a}↔{b}: {old_risk} → {new_risk}")
-
-tracker = RelationshipTracker(on_risk_change=on_alert)
-
-# 一键健康摘要
-print(tracker.summary())
-```
-
-**Agent 框架教 Agent 怎么做事。Agent Relationship 告诉它们彼此之间正在发生什么。**
-
-### 不是又一个 Agent 框架
-
-| | Agent Relationship | LangGraph / CrewAI / AutoGen |
-|---|---|---|
-| 任务编排 | ❌ 不做 | ✅ |
-| 工具调用 | ❌ 不做 | ✅ |
-| 记忆管理 | ❌ 不做 | ✅ |
-| 双边关系建模 (balance + trust + type) | ✅ | ❌ |
-| Moloch 竞争升级检测 | ✅ | ❌ |
-| 关系修复路径 (3 条 + 冷却) | ✅ | ❌ |
-| 风险过渡感知 (low→medium→high→critical) | ✅ | ❌ |
-| 风险变化实时回调 | ✅ | ❌ |
-| OpenAI / DeepSeek / Anthropic / Mock | ✅ | 各自绑定 |
-
-**互补，不竞争。** 三行代码接入任何框架。
-
-### 快速开始
-
-```python
-from agent_relationship import RelationshipTracker
-
-# 零配置起步
-tracker = RelationshipTracker()
-
-# 记录交互
-tracker.track("alice", "bob", {
-    "action": "help",
-    "result": "success",
-    "narrative": "alice 帮助 bob 完成了数据分析任务"
-})
-
-# 查询健康度
-h = tracker.health("alice", "bob")
-print(f"balance={h.balance:.2f}, risk={h.risk}")
-```
-
-### 8 个核心方法
-
-| 方法 | 作用 |
-|------|------|
-| `track(a, b, ctx)` | 记录交互，返回 balance + risk + risk_transition |
-| `health(a, b)` | 查询双边关系健康度 |
-| `can_cooperate(a, b)` | 集成到 Agent 决策循环，关系不足时返回修复路径 |
-| `history(a, b)` | 查询交互历史 (按时间倒序) |
-| `network(ids)` | 全网关系矩阵 + ASCII 热力图 |
-| `detect_moloch()` | 竞争升级检测，返回类型化 MolochZone 列表 |
-| `repair_paths(a, b)` | 三条关系修复路径 (根据 balance 自适应过滤) |
-| `summary()` | 一键 Markdown 健康摘要 |
-
-### 四引擎支持
-
-```python
-tracker = RelationshipTracker()                        # Mock — 零配置
-tracker = RelationshipTracker(llm="openai")            # OpenAI GPT / Codex
-tracker = RelationshipTracker(llm="deepseek")          # DeepSeek V4 Flash
-tracker = RelationshipTracker(llm="anthropic")         # Anthropic Claude
-```
-
-| 后端 | 环境变量 | 默认模型 |
-|------|---------|---------|
-| `mock` | 无 | — |
-| `openai` | `OPENAI_API_KEY` | `gpt-4o` |
-| `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-v4-flash` |
-| `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
-
-### 与现有框架集成
-
-#### LangGraph — 带决策循环
-
-```python
-from agent_relationship import RelationshipTracker
-
-tracker = RelationshipTracker(llm="deepseek")
-
-def agent_node(state):
-    agent, target = state["agent"], state["target"]
-
-    check = tracker.can_cooperate(agent, target)
-    if not check["can"]:
-        if check["needs_repair"]:
-            check = tracker.can_cooperate(agent, target, try_repair=True)
-        if not check["can"]:
-            return {"status": "skipped", "reason": check["reason"]}
-
-    result = execute_task(state)
-    tracker.track(agent, target, {
-        "action": state["action"],
-        "result": result["status"],
-        "narrative": result["summary"],
-    })
-    return result
-```
-
-#### CrewAI
-
-```python
-tracker = RelationshipTracker(llm="anthropic")
-
-class MyAgent(Agent):
-    def execute_task(self, task, context=None):
-        result = super().execute_task(task, context)
-        for other in context.get("collaborators", []):
-            tracker.track(self.role, other.role, {
-                "action": task.description,
-                "result": "success" if result else "failed",
-                "narrative": str(result)[:500],
-            })
-        return result
-```
-
-### 规范
-
-- **零必选依赖**: 核心引擎 + MockLLM 完全自包含，`urllib` 直调 HTTP
-- **Python ≥ 3.10**
-- **测试**: 57 个单元测试 + 回归测试，覆盖全部 8 个公开 API + 4 个 LLM 后端
-- **源码:测试比**: 1,651 : 684 ≈ 2.4 : 1
-- **可选依赖**: `pip install agent-relationship[openai]` / `[anthropic]` / `[all]`
-
-### 许可证
-
-MIT
+MIT License.

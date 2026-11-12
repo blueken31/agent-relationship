@@ -7,17 +7,12 @@ Anthropic Claude API 后端 — Messages API 格式。
   ANTHROPIC_API_KEY  — API 密钥 (必填)
   ANTHROPIC_MODEL     — 模型名 (默认 claude-sonnet-4-20250514)
 
-可用模型:
-  - claude-sonnet-4-20250514: 平衡性能与成本 (默认)
-  - claude-opus-4-20250918:   最强推理
-  - claude-haiku-4-20250514:  最快最便宜
-
 与 OpenAI 格式的核心差异:
   - 端点: https://api.anthropic.com/v1/messages
   - 认证: x-api-key 头 (非 Authorization: Bearer)
   - 版本: anthropic-version: 2023-06-01 (必填)
   - system: 顶层字段 (非 messages 数组内)
-  - 响应: content[0].text (非 choices[0].message.content)
+  - 响应: content 数组内的 text 块
   - max_tokens: 必填 (OpenAI 可选)
   - JSON mode: 无原生支持，用 prompt 引导
 """
@@ -43,10 +38,12 @@ class AnthropicLLM(LLMBackend):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-sonnet-4-20250514",
+        model: Optional[str] = None,
     ):
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-        self.model = os.environ.get("ANTHROPIC_MODEL", model)
+        self.model = model if model is not None else os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+        if not isinstance(self.model, str) or not self.model.strip():
+            raise ValueError("model must be a nonempty string")
 
         if not self.api_key:
             raise ValueError(
@@ -98,11 +95,20 @@ class AnthropicLLM(LLMBackend):
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
                 data = json.loads(resp.read())
-                # Anthropic 响应: content 是数组，取第一个 text
-                return data["content"][0]["text"]
+                content = data["content"]
+                if not isinstance(content, list):
+                    raise ValueError("missing content blocks")
+                text = "".join(
+                    block["text"] for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                    and isinstance(block.get("text"), str)
+                )
+                if not text.strip():
+                    raise ValueError("missing text response")
+                return text
         except urllib.error.HTTPError as e:
             raise RuntimeError(
-                f"Anthropic API 错误 ({e.code}): {e.read().decode()}"
-            )
-        except Exception as e:
-            raise RuntimeError(f"Anthropic 调用失败: {e}")
+                f"Anthropic API 请求失败 (HTTP {e.code})"
+            ) from None
+        except Exception:
+            raise RuntimeError("Anthropic 调用失败或响应格式无效") from None

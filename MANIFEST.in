@@ -1,5 +1,6 @@
 include README.md
 include LICENSE
-graft agent_relationship
-
 recursive-include agent_relationship *.py
+recursive-include examples *.py
+recursive-include docs *.md
+global-exclude *.py[cod]

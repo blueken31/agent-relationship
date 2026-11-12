@@ -5,11 +5,17 @@ Agent Relationship — 关系引擎
 """
 
 import time
+import copy
+import json
+import math
+import threading
+import uuid
 from typing import Dict, List, Optional, Set, Tuple
 
 from .models import RelationProfile, InteractionRecord
 from .repair import RepairMechanism
 from .llm import LLMBackend
+from .recovery import RecoveryLedger
 
 
 class RelationshipEngine:
@@ -23,8 +29,19 @@ class RelationshipEngine:
     - 关系修复路径
     """
 
-    def __init__(self, llm: LLMBackend, max_history: int = 100):
+    def __init__(self, llm: LLMBackend, max_history: int = 100, temperature: float = 0.3):
+        if isinstance(max_history, bool) or not isinstance(max_history, int) or max_history < 1:
+            raise ValueError("max_history 必须为正整数")
+        if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not math.isfinite(temperature) or not 0 <= temperature <= 2:
+            raise ValueError("temperature 必须为 0 到 2 的有限数值")
         self.llm = llm
+        self.temperature = temperature
+        self.lock = threading.RLock()
+        self.recovery = RecoveryLedger()
+        self._task_profiles = {}
+        self._events = {}
+        self.event_records = {}
+        self._zones = []
         self.profiles: Dict[Tuple[str, str], RelationProfile] = {}
         self.repair = RepairMechanism()
         self.moloch_threshold: float = 0.3
@@ -39,9 +56,11 @@ class RelationshipEngine:
     # ── 查询 ──
 
     def get_relationship(
-        self, agent_a: str, agent_b: str
+        self, agent_a: str, agent_b: str, task_id: Optional[str] = None
     ) -> Optional[RelationProfile]:
         """查询双边关系"""
+        if task_id is not None:
+            return self._task_profiles.get((task_id, *self._key(agent_a, agent_b)))
         return self.profiles.get(self._key(agent_a, agent_b))
 
     def get_or_create_relationship(
@@ -58,127 +77,121 @@ class RelationshipEngine:
 
     # ── 记录交互 ──
 
-    def record_interaction(
-        self,
-        initiator: str,
-        target: str,
-        interaction_data: Dict,
-    ) -> Dict:
-        """
-        记录一次交互，更新关系档案。
+    @staticmethod
+    def risk_for(profile: RelationProfile) -> str:
+        if not profile.assessed_count or (profile.interaction_history and
+                profile.interaction_history[-1].assessment_status != "assessed"):
+            return "unknown"
+        return ("low" if profile.balance >= 0.7 else "medium" if profile.balance >= 0.5
+                else "high" if profile.balance >= 0.3 else "critical")
 
-        interaction_data 自由格式:
-          {"action": "...", "result": "...", "narrative": "..."}
-        """
-        impact_a = self._estimate_impact(
-            initiator, interaction_data, True
-        )
-        impact_b = self._estimate_impact(
-            target, interaction_data, False
-        )
-
-        record = InteractionRecord(
-            timestamp=time.time(),
-            interaction_type=interaction_data.get(
-                "action", interaction_data.get("type", "unknown")
-            ),
-            initiator=initiator,
-            target=target,
-            action=interaction_data,
-            impact_a=impact_a,
-            impact_b=impact_b,
-            context=interaction_data,
-        )
-
-        profile = self.get_or_create_relationship(initiator, target)
-        profile.record_interaction(record)
-
-        return {
-            "balance": profile.balance,
-            "trust": profile.trust,
-            "relation_type": profile.relation_type.value,
-            "impact": (impact_a + impact_b) / 2,
-            "interaction_count": profile.interaction_count,
-        }
-
-    # ── 协作检查 ──
-
-    def can_cooperate(
-        self,
-        agent_a: str,
-        agent_b: str,
-        threshold: float = 0.4,
-        is_repair_attempt: bool = False,
-    ) -> Dict:
-        """
-        检查两个 Agent 是否可以协作。
-
-        不是简单的是/否 — 返回修复路径而非永久封锁。
-        """
-        profile = self.get_relationship(agent_a, agent_b)
-
-        if not profile:
-            return {
-                "can": True,
-                "reason": "无历史交互",
-                "confidence": 0.3,
-                "needs_repair": False,
+    def record_interaction(self, initiator: str, target: str, interaction_data: Dict) -> Dict:
+        """Atomically record a JSON event. Explicit event IDs are idempotent per instance."""
+        if any(not isinstance(a, str) or not a.strip() for a in (initiator, target)) or initiator == target:
+            raise ValueError("需要两个不同且非空的 Agent ID")
+        if not isinstance(interaction_data, dict):
+            raise ValueError("interaction 必须是 JSON 对象")
+        try:
+            data = json.loads(json.dumps(interaction_data, ensure_ascii=False, allow_nan=False))
+        except (ValueError, TypeError, RecursionError) as exc:
+            raise ValueError("interaction 必须包含可序列化的有限 JSON 值") from exc
+        event_id = data.get("event_id", str(uuid.uuid4()))
+        task_id = data.get("task_id")
+        if not isinstance(event_id, str) or not event_id.strip():
+            raise ValueError("event_id 必须为非空字符串")
+        if task_id is not None and (not isinstance(task_id, str) or not task_id.strip()):
+            raise ValueError("task_id 必须为非空字符串")
+        action = data.get("action", data.get("type", "unknown"))
+        if not isinstance(action, str) or not action.strip():
+            raise ValueError("action 必须为非空字符串")
+        fingerprint = json.dumps([initiator, target, data], sort_keys=True, ensure_ascii=False)
+        with self.lock:
+            if event_id in self._events:
+                previous_fingerprint, previous = self._events[event_id]
+                if previous_fingerprint != fingerprint:
+                    raise ValueError("event_id 已被不同内容使用")
+                result = copy.deepcopy(previous)
+                result["duplicate"] = True
+                return result
+            assessment = self.llm.assess_interaction(initiator, target, data, temperature=self.temperature)
+            pair_key = self._key(initiator, target)
+            original = self.get_relationship(initiator, target)
+            profile = copy.deepcopy(original) if original else RelationProfile(
+                agent_a=pair_key[0], agent_b=pair_key[1], max_history_length=self.max_history)
+            prev_balance = profile.balance if profile.interaction_count else None
+            record = InteractionRecord(
+                timestamp=time.time(), interaction_type=action, initiator=initiator, target=target,
+                action=copy.deepcopy(data), context=copy.deepcopy(data),
+                impact_a=assessment.impact_a, impact_b=assessment.impact_b,
+                event_id=event_id, task_id=task_id, assessment_status=assessment.status,
+                assessment_source=assessment.source, assessment_reason=assessment.reason,
+                assessment_error=assessment.error_code, goal_status=assessment.goal_status,
+            )
+            profile.record_interaction(record)
+            scoped = profile
+            if task_id is not None:
+                key = (task_id, *self._key(initiator, target))
+                original_scoped = self._task_profiles.get(key)
+                scoped = copy.deepcopy(original_scoped) if original_scoped else RelationProfile(
+                    agent_a=key[1], agent_b=key[2], max_history_length=self.max_history)
+                prev_balance = scoped.balance if scoped.interaction_count else None
+                scoped.record_interaction(copy.deepcopy(record))
+            risk = self.risk_for(scoped)
+            incident_id = self.recovery.observe(record, risk)
+            self.profiles[pair_key] = profile
+            if task_id is not None:
+                self._task_profiles[key] = scoped
+            self.event_records[event_id] = copy.deepcopy(record)
+            self._previous_moloch_zones = self._zones
+            self._zones = self._detect_moloch_zones(pair_key)
+            result = {
+                "balance": scoped.balance, "trust": scoped.trust,
+                "relation_type": scoped.relation_type.value,
+                "impact": ((assessment.impact_a + assessment.impact_b) / 2
+                           if assessment.status == "assessed" else None),
+                "interaction_count": scoped.interaction_count, "risk": risk,
+                "prev_balance": prev_balance, "event_id": event_id, "task_id": task_id,
+                "assessment_status": assessment.status, "assessment_source": assessment.source,
+                "reason": assessment.reason, "error_code": assessment.error_code,
+                "assessment_version": assessment.version, "model": assessment.model,
+                "goal_status": assessment.goal_status, "confidence": scoped.confidence if risk != "unknown" else 0.0,
+                "incident_id": incident_id, "duplicate": False,
             }
+            self._events[event_id] = (fingerprint, copy.deepcopy(result))
+            return result
 
-        if is_repair_attempt:
-            can_repair, msg = self.repair.can_attempt_repair(profile)
-            if can_repair:
-                result = self.repair.execute_repair_attempt(
-                    profile
-                )
-                return {
-                    "can": True,
-                    "reason": f"修复尝试: {msg}",
-                    "confidence": result["temp_threshold"],
-                    "needs_repair": True,
-                }
+    def can_cooperate(self, agent_a: str, agent_b: str, threshold: float = 0.7,
+                      is_repair_attempt: bool = False, task_id: Optional[str] = None) -> Dict:
+        """Advisory diagnosis only; never grants host execution authority."""
+        if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or not math.isfinite(threshold) or not 0 <= threshold <= 1:
+            raise ValueError("threshold 必须为 0 到 1 的有限数值")
+        with self.lock:
+            profile = self.get_relationship(agent_a, agent_b, task_id)
+            issues = self.recovery.open_for_pair(agent_a, agent_b, task_id)
+            risk = self.risk_for(profile) if profile else "unknown"
+            result = {"can": False, "decision": "unknown", "reason": "证据不足，按宿主原有规则处理",
+                      "confidence": profile.confidence if profile else 0.0,
+                      "risk": risk, "needs_repair": bool(issues), "task_id": task_id,
+                      "incident_ids": [i["id"] for i in issues],
+                      "advisory_only": True, "mode": "observe"}
+            if is_repair_attempt:
+                result.update(decision="repair_required", needs_repair=bool(issues),
+                              reason="请为具体异常创建受限恢复方案；修复建议不会放行原任务")
+            elif issues:
+                result.update(decision="review", reason="存在未解决异常，请查看原任务依据及恢复建议")
+            elif not profile or risk == "unknown" or profile.assessed_count < 3:
+                pass
+            elif profile.balance >= threshold:
+                result.update(can=True, decision="continue",
+                              reason=f"达到配置门槛；当前风险 {risk}，仍须遵守宿主权限与任务限制")
             else:
-                return {
-                    "can": False,
-                    "reason": msg,
-                    "confidence": 0.0,
-                    "needs_repair": True,
-                }
-
-        if profile.balance > threshold:
-            return {
-                "can": True,
-                "reason": f"关系良好 (balance={profile.balance:.2f})",
-                "confidence": profile.balance,
-                "needs_repair": False,
-            }
-        else:
-            return {
-                "can": False,
-                "reason": (
-                    f"关系需要修复 (balance={profile.balance:.2f})"
-                ),
-                "confidence": 1.0 - profile.balance,
-                "needs_repair": True,
-                "repair_paths": [
-                    p["description"]
-                    for p in self.repair.available_paths()
-                ],
-            }
-
-    # ── 影响评估 ──
-
-    def _estimate_impact(
-        self, agent_id: str, interaction: Dict, is_initiator: bool
-    ) -> float:
-        """通过 LLM 估算交互影响"""
-        return self.llm.estimate_impact(
-            agent_id, interaction, is_initiator
-        )
+                result.update(decision="review", needs_repair=False,
+                              reason="近期协作表现未达到配置门槛，建议核对任务依据；尚无需要恢复的具体异常")
+            return result
 
     # ── Moloch 检测 ──
 
-    def _detect_moloch_zones(self) -> List[Dict]:
+    def _detect_moloch_zones(self, changed_pair=None) -> List[Dict]:
         """
         Moloch 萌芽检测。
 
@@ -194,7 +207,7 @@ class RelationshipEngine:
             (a, b)
             for (a, b), profile in self.profiles.items()
             if profile.balance < threshold
-            and profile.interaction_count >= 3
+            and profile.assessed_count >= 3
         ]
 
         # 建图
@@ -238,7 +251,10 @@ class RelationshipEngine:
 
                 trend = "stable"
                 prev = self._find_previous_zone(component)
-                if prev:
+                relevant_change = changed_pair is None or set(changed_pair).issubset(component)
+                if prev and not relevant_change:
+                    trend = prev["trend"]
+                elif prev:
                     delta = avg_balance - prev["avg_balance"]
                     if delta < -0.05:
                         trend = "deteriorating"
@@ -254,16 +270,15 @@ class RelationshipEngine:
                         "severity": self._classify_severity(
                             avg_balance, len(component), trend
                         ),
-                        "first_detected": prev is None,
+                        "first_detected": (prev["first_detected"] if prev and not relevant_change else prev is None),
                     }
                 )
 
-        self._previous_moloch_zones = moloch_zones
         return moloch_zones
 
     def get_moloch_report(self) -> Dict:
         """获取 Moloch 检测报告"""
-        zones = self._detect_moloch_zones()
+        zones = copy.deepcopy(self._zones)
         total = len(self.profiles)
         balanced = sum(
             1

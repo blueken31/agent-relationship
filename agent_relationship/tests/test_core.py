@@ -252,13 +252,13 @@ class TestRepairMechanism(unittest.TestCase):
         self.assertFalse(can)
         self.assertIn("冷却", msg)
 
-    def test_execute_repair_updates_count(self):
+    def test_legacy_repair_cannot_grant_or_consume_attempt(self):
         p = RelationProfile(agent_a="x", agent_b="y")
         p.balance = 0.15
         result = self.repair.execute_repair_attempt(p)
-        self.assertEqual(result["status"], "repair_granted")
-        self.assertEqual(p.repair_attempts, 1)
-        self.assertLessEqual(result["temp_threshold"], 0.3)
+        self.assertEqual(result["status"], "plan_required")
+        self.assertFalse(result["can"])
+        self.assertEqual(p.repair_attempts, 0)
 
     def test_available_paths_count(self):
         paths = self.repair.available_paths()
@@ -314,8 +314,9 @@ class TestRelationshipEngine(unittest.TestCase):
 
     def test_can_cooperate_no_history(self):
         result = self.engine.can_cooperate("x", "y")
-        self.assertTrue(result["can"])
-        self.assertEqual(result["reason"], "无历史交互")
+        self.assertFalse(result["can"])
+        self.assertEqual(result["decision"], "unknown")
+        self.assertTrue(result["advisory_only"])
 
     def test_can_cooperate_good_relationship(self):
         # 建立良好关系
@@ -467,9 +468,10 @@ class TestRelationshipTracker(unittest.TestCase):
         self.assertIsNotNone(result.prev_balance)
 
     def test_can_cooperate_no_history(self):
-        """v0.2.0: can_cooperate 对无历史返回 true"""
+        """v0.3: no history is explicitly unknown, not an execution grant."""
         result = self.tracker.can_cooperate("x", "y")
-        self.assertTrue(result["can"])
+        self.assertFalse(result["can"])
+        self.assertEqual(result["decision"], "unknown")
         self.assertFalse(result["needs_repair"])
 
     def test_can_cooperate_with_repair_attempt(self):
@@ -490,7 +492,8 @@ class TestRelationshipTracker(unittest.TestCase):
             repair_result = self.tracker.can_cooperate(
                 "x", "y", try_repair=True
             )
-            self.assertTrue(repair_result["can"])
+            self.assertFalse(repair_result["can"])
+            self.assertEqual(repair_result["decision"], "repair_required")
 
     def test_history_empty(self):
         """v0.2.0: 无历史返回空列表"""
@@ -561,7 +564,7 @@ class TestLLMBackend(unittest.TestCase):
     def test_mock_estimate_impact_beneficial(self):
         llm = MockLLM()
         impact = llm.estimate_impact(
-            "alice", {"action": "help", "result": "成功帮助"}, True
+            "alice", {"action": "help", "result": "success"}, True
         )
         self.assertGreater(impact, 0)
 
@@ -581,13 +584,13 @@ class TestLLMBackend(unittest.TestCase):
         impact = LLMBackend._fallback_estimate_impact(
             {"action": "help"}, True
         )
-        self.assertGreater(impact, 0)
+        self.assertEqual(impact, 0)
 
     def test_fallback_harmful(self):
         impact = LLMBackend._fallback_estimate_impact(
             {"action": "attack"}, True
         )
-        self.assertLess(impact, 0)
+        self.assertEqual(impact, 0)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -649,15 +652,15 @@ class TestRegressionFixes(unittest.TestCase):
         profile = tracker.engine.get_relationship("a", "b")
         self.assertEqual(len(profile.interaction_history), 5)
 
-    def test_repair_paths_filters_extreme(self):
-        """R3: balance 极低时 repair_paths 应过滤低成功率路径"""
+    def test_repair_paths_do_not_invent_success_probabilities(self):
+        """Recovery paths are descriptions, not calibrated outcome probabilities."""
         tracker = RelationshipTracker()
 
         # 正常情况: 3 条路径
         paths_normal = tracker.repair_paths("x", "y")
         self.assertEqual(len(paths_normal), 3)
 
-        # 极度恶化: 应过滤掉 success_probability < 0.6 的
+        # 极度恶化也不伪造成功概率。
         for _ in range(15):
             tracker.track("x", "y", {
                 "action": "attack", "result": "failed", "narrative": "攻击破坏"
@@ -666,18 +669,20 @@ class TestRegressionFixes(unittest.TestCase):
         h = tracker.health("x", "y")
         if h and h.balance < 0.15:
             paths_extreme = tracker.repair_paths("x", "y")
-            self.assertLessEqual(len(paths_extreme), 2)
+            self.assertEqual(len(paths_extreme), 3)
             for p in paths_extreme:
-                self.assertGreaterEqual(p.success_probability, 0.6)
+                self.assertIsNone(p.success_probability)
 
-    def test_mock_no_dead_code_chaoe(self):
-        """B4: '超额' 不应在 advantageous 中 (已被 unbalanced 优先匹配)"""
+    def test_mock_does_not_guess_narrative_semantics(self):
+        """Unsupported mock narratives stay unknown instead of assigning scores."""
         llm = MockLLM()
-        # "超额" 场景 → 应该走 unbalanced (impact=-0.15)，不是 advantageous (impact=0.6)
+        # 叙述不替代明确模拟场景。
         impact = llm.estimate_impact(
             "test", {"action": "exchange", "narrative": "超额提取"}, True
         )
-        self.assertLess(impact, 0, "'超额' 应被识别为 unbalanced (负影响)")
+        self.assertEqual(impact, 0)
+        assessment = llm.assess_interaction("a", "b", {"action": "exchange", "narrative": "超额提取"})
+        self.assertEqual(assessment.status, "unknown")
 
 
 if __name__ == "__main__":
