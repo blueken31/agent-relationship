@@ -2,7 +2,7 @@
 Agent Relationship — OpenAILLM
 
 OpenAI Chat Completions API 后端。
-支持 GPT-4o, GPT-4.1, Codex 等所有 OpenAI 模型。
+只适用于支持 Chat Completions 请求格式的模型；不提供 Responses API。
 """
 
 import json
@@ -27,13 +27,16 @@ class OpenAILLM(LLMBackend):
         self,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        model: str = "gpt-4o",
+        model: Optional[str] = None,
     ):
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self.base_url = base_url or os.environ.get(
             "OPENAI_BASE_URL", "https://api.openai.com/v1"
         )
-        self.model = os.environ.get("OPENAI_MODEL", model)
+        self.model = model if model is not None else os.environ.get("OPENAI_MODEL", "gpt-4o")
+
+        if not isinstance(self.model, str) or not self.model.strip():
+            raise ValueError("model must be a nonempty string")
 
         if not self.api_key:
             raise ValueError(
@@ -62,7 +65,7 @@ class OpenAILLM(LLMBackend):
         if json_mode:
             body["response_format"] = {"type": "json_object"}
 
-        endpoint = f"{self.base_url}/chat/completions"
+        endpoint = f"{self.base_url.rstrip('/')}/chat/completions"
         req = urllib.request.Request(
             endpoint,
             data=json.dumps(body).encode("utf-8"),
@@ -74,10 +77,13 @@ class OpenAILLM(LLMBackend):
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
                 data = json.loads(resp.read())
-                return data["choices"][0]["message"]["content"]
+                content = data["choices"][0]["message"]["content"]
+                if not isinstance(content, str) or not content.strip():
+                    raise ValueError("missing text response")
+                return content
         except urllib.error.HTTPError as e:
             raise RuntimeError(
-                f"OpenAI API 错误 ({e.code}): {e.read().decode()}"
-            )
-        except Exception as e:
-            raise RuntimeError(f"LLM 调用失败: {e}")
+                f"Chat Completions API 请求失败 (HTTP {e.code})"
+            ) from None
+        except Exception:
+            raise RuntimeError("Chat Completions 调用失败或响应格式无效") from None

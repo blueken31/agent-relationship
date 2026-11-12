@@ -12,12 +12,25 @@ class TrackResult:
 
     balance: float
     relation_type: str
-    impact: float
+    impact: Optional[float]
     interaction_count: int
     # ── v0.2.0: 风险感知 ──
     risk: str = "low"  # "low" | "medium" | "high" | "critical"
     prev_balance: Optional[float] = None  # 交互前的 balance
-    risk_transition: Optional[str] = None  # "improved" | "worsened" | "stable"
+    risk_transition: Optional[str] = None
+    event_id: str = ""
+    task_id: Optional[str] = None
+    assessment_status: str = "unknown"
+    assessment_source: str = "unknown"
+    reason: str = ""
+    error_code: Optional[str] = None
+    assessment_version: str = "1"
+    model: Optional[str] = None
+    goal_status: str = "unknown"
+    confidence: float = 0.0
+    incident_id: Optional[str] = None
+    duplicate: bool = False
+    notification_error: Optional[str] = None
 
 
 @dataclass
@@ -32,7 +45,10 @@ class Health:
     parasitic: int
     conflictual: int
     power_asymmetry: float
-    risk: str  # "low" | "medium" | "high" | "critical"
+    risk: str  # Includes unknown when evidence is unavailable.
+    confidence: float = 0.0  # Evidence quantity heuristic, not calibrated probability.
+    assessment_status: str = "unknown"
+    open_incident_count: int = 0
 
 
 @dataclass
@@ -40,7 +56,7 @@ class NetworkReport:
     """network() 返回的全网关系矩阵"""
 
     pairs: Dict[Tuple[str, str], Optional[float]]
-    avg_balance: float
+    avg_balance: Optional[float]
     weakest_link: Optional[Tuple[str, str, float]]
     agent_count: int
     relationship_count: int
@@ -147,4 +163,4 @@ class RepairPath:
     path: str
     description: str
     cost: str  # "low" | "medium" | "high"
-    success_probability: float
+    success_probability: Optional[float] = None

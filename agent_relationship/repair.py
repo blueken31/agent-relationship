@@ -1,77 +1,33 @@
-"""
-Agent Relationship — 关系修复机制
+"""Descriptive recovery paths. Host authority is never expanded by a diagnosis."""
 
-当 balance 低于阈值时:
-  a) 低风险小额交互 (临时降低门槛)
-  b) 通过中间人间接对话
-  c) 请求第三方调解
-"""
-
-from typing import Dict, Tuple
 import time
-
+from typing import Dict, Tuple
 from .models import RelationProfile
 
 
 class RepairMechanism:
-    """三条修复路径 + 冷却机制"""
+    """Legacy metadata API; use task-bound RecoveryLedger plans for recovery."""
 
-    REPAIR_COOLDOWN = 3600  # 两次修复之间最小间隔 (秒)
+    REPAIR_COOLDOWN = 3600
 
-    def can_attempt_repair(
-        self, profile: RelationProfile
-    ) -> Tuple[bool, str]:
-        """是否可以进行修复尝试"""
-        if profile.balance >= 0.3:
-            return (True, "关系尚可，无需特殊修复")
+    def can_attempt_repair(self, profile: RelationProfile) -> Tuple[bool, str]:
+        elapsed = time.time() - profile.last_repair_time
+        if profile.last_repair_time > 0 and elapsed < self.REPAIR_COOLDOWN:
+            return False, f"修复冷却中 ({int(self.REPAIR_COOLDOWN - elapsed)}秒)"
+        return True, "可为原任务准备受限恢复方案"
 
-        cooldown_remaining = time.time() - profile.last_repair_time
-        if cooldown_remaining < self.REPAIR_COOLDOWN:
-            remaining = self.REPAIR_COOLDOWN - cooldown_remaining
-            return (False, f"修复冷却中 ({int(remaining)}秒)")
-
-        return (True, "可以进行修复尝试")
-
-    def execute_repair_attempt(
-        self, profile: RelationProfile
-    ) -> Dict:
-        """
-        执行一次修复尝试。
-
-        临时降低交互门槛为 balance * 1.5 (最多到 0.3)，允许一次低风险交互。
-        """
-        temp_threshold = min(0.3, profile.balance * 1.5)
-
-        profile.repair_attempts += 1
-        profile.last_repair_time = time.time()
-
-        return {
-            "status": "repair_granted",
-            "temp_threshold": temp_threshold,
-            "repair_attempt": profile.repair_attempts,
-            "message": "已允许一次低风险交互，balance 将据此更新",
-        }
+    def execute_repair_attempt(self, profile: RelationProfile) -> Dict:
+        # This deprecated query must not mutate state or grant original task execution.
+        return {"status": "plan_required", "can": False,
+                "message": "请使用 propose_repair 为具体异常创建方案，并回收验证结果"}
 
     @staticmethod
     def available_paths() -> list:
-        """返回所有可用的修复路径"""
         return [
-            {
-                "path": "indirect_dialogue",
-                "description": "通过中间人进行间接对话",
-                "cost": "low",
-                "success_probability": 0.6,
-            },
-            {
-                "path": "low_risk_interaction",
-                "description": "尝试一次低风险小额交互",
-                "cost": "medium",
-                "success_probability": 0.4,
-            },
-            {
-                "path": "third_party_mediation",
-                "description": "请求第三方介入调解",
-                "cost": "high",
-                "success_probability": 0.7,
-            },
+            {"path": "verify_handoff", "description": "核对交接资料与验收条件", "cost": "low",
+             "success_probability": None},
+            {"path": "restricted_retest", "description": "在限定范围内复测一次", "cost": "medium",
+             "success_probability": None},
+            {"path": "reassign_task", "description": "由宿主核验能力和权限后改派原任务", "cost": "high",
+             "success_probability": None},
         ]

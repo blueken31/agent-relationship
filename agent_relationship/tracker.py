@@ -1,5 +1,5 @@
 """
-Agent Relationship — RelationshipTracker v0.2.0
+Agent Relationship — RelationshipTracker v0.3.0
 
 面向开发者的公开 API:
   track / health / can_cooperate / network / history
@@ -7,8 +7,10 @@ Agent Relationship — RelationshipTracker v0.2.0
 """
 
 import io
-import time
-from typing import Callable, Dict, List, Optional, Tuple
+import copy
+import math
+from functools import wraps
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 from .engine import RelationshipEngine
 from .llm import LLMBackend, MockLLM
@@ -18,19 +20,17 @@ from .types import (
 )
 
 
-def _compute_risk(balance: float) -> str:
-    if balance >= 0.7:
-        return "low"
-    elif balance >= 0.5:
-        return "medium"
-    elif balance >= 0.3:
-        return "high"
-    return "critical"
+def _snapshot_read(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._engine.lock:
+            return method(self, *args, **kwargs)
+    return wrapped
 
 
 class RelationshipTracker:
     """
-    关系跟踪器 — 给多 Agent 系统注入关系感知。
+    关系跟踪器 — 记录任务协作依据与受限恢复结果。
 
     v0.2.0 新增:
       - can_cooperate() — 集成到 Agent 决策循环
@@ -42,7 +42,7 @@ class RelationshipTracker:
 
     def __init__(
         self,
-        llm: str = "mock",
+        llm: Union[str, LLMBackend] = "mock",
         model: Optional[str] = None,
         api_key: Optional[str] = None,
         temperature: float = 0.3,
@@ -55,7 +55,7 @@ class RelationshipTracker:
     ):
         """
         Args:
-            llm: "mock" | "openai" | "deepseek" | "anthropic"
+            llm: "mock" | "openai" | "deepseek" | "anthropic" 或 LLMBackend 实例
             model: 覆盖默认模型
             api_key: API 密钥
             temperature: LLM 采样温度
@@ -66,22 +66,29 @@ class RelationshipTracker:
                 签名: (agent_a, agent_b, old_risk, new_risk, balance) -> None
         """
         self._backend = self._create_llm(llm, model, api_key)
-        self._engine = RelationshipEngine(self._backend, max_history=max_history)
+        if isinstance(moloch_threshold, bool) or not isinstance(moloch_threshold, (int, float)) or not math.isfinite(moloch_threshold) or not 0 <= moloch_threshold <= 1:
+            raise ValueError("moloch_threshold 必须为 0 到 1 的有限数值")
+        if isinstance(moloch_min_zone_size, bool) or not isinstance(moloch_min_zone_size, int) or moloch_min_zone_size < 2:
+            raise ValueError("moloch_min_zone_size 必须为至少 2 的整数")
+        self._engine = RelationshipEngine(self._backend, max_history=max_history, temperature=temperature)
+        self._track_results = {}
         self._engine.moloch_threshold = moloch_threshold
         self._engine.moloch_min_zone_size = moloch_min_zone_size
         self._temperature = temperature
         self._max_history = max_history
         self._on_risk_change = on_risk_change
         # 缓存上次 risk，用于检测过渡 (规范化 key)
-        self._risk_cache: Dict[Tuple[str, str], str] = {}
+        self._risk_cache: Dict[Tuple[Optional[str], str, str], str] = {}
 
     def _create_llm(
         self,
-        llm_type: str,
+        llm_type: Union[str, LLMBackend],
         model: Optional[str] = None,
         api_key: Optional[str] = None,
     ) -> LLMBackend:
         """工厂方法"""
+        if isinstance(llm_type, LLMBackend):
+            return llm_type
         if llm_type == "mock":
             return MockLLM()
         elif llm_type == "openai":
@@ -137,54 +144,54 @@ class RelationshipTracker:
         v0.2.0: 返回结果包含 risk + risk_transition，
         无需再单独调用 health() 来判断关系是否恶化。
         """
-        # 记录交互前的 balance
-        prev_profile = self._engine.get_relationship(agent_a, agent_b)
-        prev_balance = prev_profile.balance if prev_profile else None
-
-        result = self._engine.record_interaction(
-            agent_a, agent_b, interaction
-        )
-        balance = result["balance"]
-        risk = _compute_risk(balance)
-
-        # 计算 risk 过渡 (使用规范化 key)
-        pair_key = self._norm_key(agent_a, agent_b)
-        prev_risk = self._risk_cache.get(pair_key)
-        transition = None
-        if prev_risk:
-            risk_order = ["low", "medium", "high", "critical"]
-            if risk_order.index(risk) < risk_order.index(prev_risk):
-                transition = "improved"
-            elif risk_order.index(risk) > risk_order.index(prev_risk):
-                transition = "worsened"
+        with self._engine.lock:
+            result = self._engine.record_interaction(agent_a, agent_b, interaction)
+            event_id = result["event_id"]
+            if result["duplicate"] and event_id in self._track_results:
+                previous = copy.deepcopy(self._track_results[event_id])
+                previous.duplicate = True
+                return previous
+            pair_key = (result["task_id"], *self._norm_key(agent_a, agent_b))
+            prev_risk = self._risk_cache.get(pair_key, "unknown")
+            risk = result["risk"]
+            transition = None
+            if prev_risk == "unknown" and risk != "unknown":
+                transition = "first_observation"
+            elif risk == "unknown":
+                transition = "unknown"
             else:
-                transition = "stable"
-
-        self._risk_cache[pair_key] = risk
-
-        # 触发回调
-        if (
-            self._on_risk_change
-            and prev_risk
-            and prev_risk != risk
-        ):
-            self._on_risk_change(
-                agent_a, agent_b, prev_risk, risk, balance
+                order = ["low", "medium", "high", "critical"]
+                transition = ("improved" if order.index(risk) < order.index(prev_risk)
+                              else "worsened" if order.index(risk) > order.index(prev_risk) else "stable")
+            self._risk_cache[pair_key] = risk
+            output = TrackResult(
+                balance=result["balance"], relation_type=result["relation_type"],
+                impact=result["impact"], interaction_count=result["interaction_count"],
+                risk=risk, prev_balance=result["prev_balance"], risk_transition=transition,
+                event_id=event_id, task_id=result["task_id"],
+                assessment_status=result["assessment_status"], assessment_source=result["assessment_source"],
+                reason=result["reason"], error_code=result["error_code"],
+                assessment_version=result["assessment_version"], model=result["model"],
+                goal_status=result["goal_status"], confidence=result["confidence"],
+                incident_id=result["incident_id"], duplicate=result["duplicate"],
             )
+            # Commit before notifying, so a callback retry cannot record or notify twice.
+            self._track_results[event_id] = copy.deepcopy(output)
+            notify = not result["duplicate"] and self._on_risk_change and prev_risk != risk and (
+                prev_risk != "unknown" or risk in ("high", "critical"))
+        if notify:
+            try:
+                self._on_risk_change(agent_a, agent_b, prev_risk, risk, output.balance)
+            except Exception:
+                output.notification_error = "callback_failed"
+                with self._engine.lock:
+                    self._track_results[event_id] = copy.deepcopy(output)
+        return output
 
-        return TrackResult(
-            balance=balance,
-            relation_type=result["relation_type"],
-            impact=result["impact"],
-            interaction_count=result["interaction_count"],
-            risk=risk,
-            prev_balance=prev_balance,
-            risk_transition=transition,
-        )
-
-    def health(self, agent_a: str, agent_b: str) -> Optional[Health]:
+    @_snapshot_read
+    def health(self, agent_a: str, agent_b: str, task_id: Optional[str] = None) -> Optional[Health]:
         """查询双边关系健康度"""
-        profile = self._engine.get_relationship(agent_a, agent_b)
+        profile = self._engine.get_relationship(agent_a, agent_b, task_id)
         if not profile:
             return None
 
@@ -197,15 +204,20 @@ class RelationshipTracker:
             parasitic=profile.parasitic_count,
             conflictual=profile.conflictual_count,
             power_asymmetry=profile.power_asymmetry,
-            risk=_compute_risk(profile.balance),
+            risk=self._engine.risk_for(profile),
+            confidence=profile.confidence if self._engine.risk_for(profile) != "unknown" else 0.0,
+            assessment_status=(profile.interaction_history[-1].assessment_status
+                               if profile.interaction_history else "unknown"),
+            open_incident_count=len(self._engine.recovery.open_for_pair(agent_a, agent_b, task_id)),
         )
 
     def can_cooperate(
         self,
         agent_a: str,
         agent_b: str,
-        threshold: float = 0.4,
+        threshold: float = 0.7,
         try_repair: bool = False,
+        task_id: Optional[str] = None,
     ) -> Dict:
         """
         ★ v0.2.0 新增 — 集成到 Agent 决策循环。
@@ -215,7 +227,7 @@ class RelationshipTracker:
 
         Args:
             agent_a, agent_b: Agent ID
-            threshold: balance 门槛 (默认 0.4)
+            threshold: balance 门槛 (默认 0.7)
             try_repair: 如果关系不足，是否尝试修复
 
         Returns:
@@ -230,14 +242,16 @@ class RelationshipTracker:
         return self._engine.can_cooperate(
             agent_a, agent_b,
             threshold=threshold,
-            is_repair_attempt=try_repair,
+            is_repair_attempt=try_repair, task_id=task_id,
         )
 
+    @_snapshot_read
     def history(
         self,
         agent_a: str,
         agent_b: str,
         limit: int = 20,
+        task_id: Optional[str] = None,
     ) -> List[Dict]:
         """
         ★ v0.2.0 新增 — 查询交互历史。
@@ -246,7 +260,9 @@ class RelationshipTracker:
             按时间倒序的交互记录列表:
             [{"action": ..., "impact_a": ..., "impact_b": ..., "timestamp": ...}, ...]
         """
-        profile = self._engine.get_relationship(agent_a, agent_b)
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+            raise ValueError("limit 必须为非负整数")
+        profile = self._engine.get_relationship(agent_a, agent_b, task_id)
         if not profile:
             return []
 
@@ -256,22 +272,30 @@ class RelationshipTracker:
             reverse=True,
         )[:limit]
 
-        return [
-            {
-                "timestamp": r.timestamp,
-                "action": r.interaction_type,
-                "initiator": r.initiator,
-                "target": r.target,
-                "impact_a": r.impact_a,
-                "impact_b": r.impact_b,
-                "net_impact": r.net_impact,
-                "is_symbiotic": r.is_symbiotic,
-                "is_parasitic": r.is_parasitic,
-                "is_conflictual": r.is_conflictual,
-            }
-            for r in records
-        ]
+        return [self._event_snapshot(r) for r in records]
 
+    def _event_snapshot(self, r) -> Dict:
+        metadata = self._engine._events.get(r.event_id, (None, {}))[1]
+        return {
+            "event_id": r.event_id, "task_id": r.task_id, "timestamp": r.timestamp,
+            "action": r.interaction_type, "initiator": r.initiator, "target": r.target,
+            "context": copy.deepcopy(r.context), "result": copy.deepcopy(r.context.get("result")),
+            "narrative": copy.deepcopy(r.context.get("narrative")), "impact_a": r.impact_a, "impact_b": r.impact_b,
+            "net_impact": r.net_impact, "is_symbiotic": r.is_symbiotic,
+            "is_parasitic": r.is_parasitic, "is_conflictual": r.is_conflictual,
+            "assessment_status": r.assessment_status, "assessment_source": r.assessment_source,
+            "reason": r.assessment_reason, "error_code": r.assessment_error,
+            "goal_status": r.goal_status, "assessment_version": metadata.get("assessment_version"),
+            "model": metadata.get("model"),
+        }
+
+    @_snapshot_read
+    def event(self, event_id: str) -> Optional[Dict]:
+        """Retrieve retained evidence even after the rolling history window expires."""
+        record = self._engine.event_records.get(event_id)
+        return self._event_snapshot(record) if record else None
+
+    @_snapshot_read
     def network(
         self, agent_ids: Optional[List[str]] = None
     ) -> NetworkReport:
@@ -287,7 +311,7 @@ class RelationshipTracker:
             for b in agent_ids[i + 1 :]:
                 key = (a, b)
                 profile = self._engine.get_relationship(a, b)
-                if profile:
+                if profile and self._engine.risk_for(profile) != "unknown":
                     val = profile.balance
                     pairs[key] = val
                     balances.append(val)
@@ -296,16 +320,17 @@ class RelationshipTracker:
                 else:
                     pairs[key] = None
 
-        avg = sum(balances) / len(balances) if balances else 0.5
+        avg = sum(balances) / len(balances) if balances else None
 
         return NetworkReport(
             pairs=pairs,
             avg_balance=avg,
             weakest_link=weakest,
             agent_count=len(agent_ids),
-            relationship_count=len(balances),
+            relationship_count=sum(self._engine.get_relationship(a, b) is not None for a, b in pairs),
         )
 
+    @_snapshot_read
     def detect_moloch(self) -> MolochReport:
         """
         ★ v0.2.0: 返回类型化的 MolochZone 列表。
@@ -332,7 +357,7 @@ class RelationshipTracker:
         for (a, b), profile in self._engine.profiles.items():
             if (
                 profile.balance < self._engine.moloch_threshold
-                and profile.interaction_count >= 3
+                and profile.assessed_count >= 3
             ):
                 in_zone = any(
                     a in z.agents and b in z.agents
@@ -352,32 +377,34 @@ class RelationshipTracker:
     def repair_paths(
         self, agent_a: str, agent_b: str
     ) -> List[RepairPath]:
-        """
-        返回可用的关系修复路径。
+        """返回描述性的恢复路径；成功率尚未校准，不构成执行授权。"""
+        return [RepairPath(**path) for path in RepairMechanism.available_paths()]
 
-        根据 balance 过滤：balance 极低时排除低风险路径，
-        优先推荐高成功率路径。
-        """
-        all_paths = RepairMechanism.available_paths()
-        h = self.health(agent_a, agent_b)
+    def incidents(self, task_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict]:
+        """Task-linked diagnostic cards, including evidence and current recovery state."""
+        return self._engine.recovery.list_incidents(task_id, status)
 
-        if h and h.balance < 0.15:
-            # 极度恶化：排除低成功率路径
-            all_paths = [
-                p for p in all_paths
-                if p["success_probability"] >= 0.6
-            ]
+    def link_incident(self, incident_id: str, task_id: str, reason: str) -> Dict:
+        return self._engine.recovery.link_incident(incident_id, task_id, reason)
 
-        return [
-            RepairPath(
-                path=p["path"],
-                description=p["description"],
-                cost=p["cost"],
-                success_probability=p["success_probability"],
-            )
-            for p in all_paths
-        ]
+    def propose_repair(self, incident_id: str, action: str = "verify_handoff") -> Dict:
+        return self._engine.recovery.propose_repair(incident_id, action)
 
+    def begin_repair(self, plan_id: str, host_authorized: bool = False) -> Dict:
+        """Record the host's authorization; this library does not execute any action."""
+        return self._engine.recovery.begin_repair(plan_id, host_authorized)
+
+    def cancel_repair(self, plan_id: str) -> Dict:
+        return self._engine.recovery.cancel_repair(plan_id)
+
+    def complete_repair(self, plan_id: str, outcome: str, evidence_event_id: str) -> Dict:
+        with self._engine.lock:
+            if evidence_event_id not in self._engine.event_records:
+                raise ValueError("恢复结果必须引用已记录的验证事件")
+            evidence = self._engine.event_records[evidence_event_id]
+            return self._engine.recovery.complete_repair(plan_id, outcome, evidence)
+
+    @_snapshot_read
     def summary(self) -> str:
         """一键生成 Markdown 格式的系统健康摘要"""
         net = self.network()
@@ -385,17 +412,25 @@ class RelationshipTracker:
 
         buf = io.StringIO()
         buf.write("# Agent 关系健康摘要\n\n")
-        buf.write("## 概览\n")
+        issues = self.incidents(status="open")
+        buf.write("观察模式：以下为诊断建议，执行权限由宿主系统控制。\n\n")
+        buf.write(f"待处理异常: {len(issues)}\n\n")
+        for issue in issues:
+            buf.write(f"- 任务 {issue.get('task_id') or '未关联'}：{issue.get('title', '协作异常')}；"
+                      f"依据 {', '.join(issue.get('evidence_ids', []))}\n")
+        buf.write("\n## 概览\n")
         buf.write(f"- Agent 总数: {net.agent_count}\n")
         buf.write(f"- 关系总数: {net.relationship_count}\n")
-        buf.write(f"- 平均 balance: {net.avg_balance:.3f}\n")
+        average = f"{net.avg_balance:.3f}" if net.avg_balance is not None else "证据不足"
+        buf.write(f"- 已评估关系平均 balance: {average}\n")
+        buf.write(f"- 评估后端: {self.llm_type}（Mock 为模拟数据）\n")
         buf.write(
-            f"- Moloch 检测: "
+            f"- 协作异常区域检测: "
             f"{'🚨 激活' if moloch.active else '未激活'}\n"
         )
 
         if moloch.zones:
-            buf.write("\n### Moloch 区域\n")
+            buf.write("\n### 协作异常区域\n")
             for z in moloch.zones:
                 buf.write(
                     f"- {', '.join(z.agents)} "
@@ -420,8 +455,9 @@ class RelationshipTracker:
         for (a, b), bal in sorted_pairs:
             h = self.health(a, b)
             if h:
+                value = format(bal, ".2f") if bal is not None else "证据不足"
                 buf.write(
-                    f"| {a} | {b} | {bal:.2f} | {h.relation_type} "
+                    f"| {a} | {b} | {value} | {h.relation_type} "
                     f"| {h.risk} |\n"
                 )
             else:
